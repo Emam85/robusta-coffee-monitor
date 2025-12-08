@@ -425,7 +425,7 @@ def manual_check():
     """Manual trigger for monitoring cycle"""
     try:
         print("🔄 Manual check triggered via /check endpoint")
-        result = run_monitor()
+        result = monitor_all_commodities()
         return jsonify({
             "status": "success",
             "message": "Monitor cycle completed",
