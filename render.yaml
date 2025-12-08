@@ -2,8 +2,9 @@ services:
   - type: web
     name: robusta-monitor
     env: python
+    plan: free
     buildCommand: "pip install -r requirements.txt"
-    startCommand: "gunicorn monitor:app --timeout 120 --workers 1"
+    startCommand: "gunicorn monitor:app --timeout 180 --workers 1 --keep-alive 5"
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.0

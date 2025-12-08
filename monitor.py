@@ -398,7 +398,6 @@ def monitor_all_commodities():
 
 # Flask app for Render.com cron job
 from flask import Flask, jsonify
-from threading import Thread
 
 app = Flask(__name__)
 
@@ -423,28 +422,25 @@ def health():
 
 @app.route('/check')
 def manual_check():
-    """Manual trigger for monitoring cycle - runs in background"""
-    def run_in_background():
-        try:
-            print("🔄 Manual check triggered via /check endpoint (background)")
-            monitor_all_commodities()
-            print("✅ Background monitoring completed")
-        except Exception as e:
-            print(f"❌ Error in background monitor: {e}")
-            import traceback
-            traceback.print_exc()
-    
-    # Start monitoring in background thread
-    thread = Thread(target=run_in_background, daemon=True)
-    thread.start()
-    
-    return jsonify({
-        "status": "started",
-        "message": "Monitoring cycle started in background",
-        "note": "Check Telegram/Email in 30-60 seconds for notifications",
-        "timestamp": datetime.now().isoformat()
-    })
-
+    """Manual trigger - synchronous monitoring"""
+    try:
+        print("🔄 Manual /check endpoint called")
+        result = monitor_all_commodities()
+        return jsonify({
+            "status": "success",
+            "message": "Monitoring completed",
+            "result": result,
+            "timestamp": datetime.now().isoformat()
+        })
+    except Exception as e:
+        print(f"❌ Error: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            "status": "error",
+            "message": str(e),
+            "timestamp": datetime.now().isoformat()
+        }), 500
 if __name__ == '__main__':
     # For local testing
     if os.environ.get('LOCAL_TEST'):
