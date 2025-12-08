@@ -2,9 +2,9 @@
 Abu Auf Procurement Monitor - Platinum Edition
 Features:
 - ⏱️ 10-Min Market Snapshots
-- 🔔 Hourly Buying Tips (9am-5pm)
-- 📄 Weekly PDF Board Report (with embedded Charts & Freight Risk)
-- 🌾 Harvest Calendar & Seasonality
+- 🔔 Hourly Buying Tips
+- 📄 Weekly PDF Board Report (Fixed for Unicode/Emojis)
+- 🌾 Harvest Calendar & Freight Risk
 - 🇪🇬 EGP Landed Cost Calculator
 """
 import os
@@ -32,7 +32,7 @@ USD_EGP_RATE = 50.5
 START_HOUR = 9
 END_HOUR = 17
 
-# WATCHLIST & HARVEST CALENDAR
+# WATCHLIST
 WATCHLIST = {
     'RC=F': {'name': 'Robusta Coffee (ICE)', 'harvest': 'Oct-Jan (Vietnam)', 'origin': 'Vietnam'},
     'KC=F': {'name': 'Coffee Arabica (ICE)', 'harvest': 'Apr-Sep (Brazil)', 'origin': 'Brazil'},
@@ -41,11 +41,15 @@ WATCHLIST = {
     'ZW=F': {'name': 'Wheat (CBOT)', 'harvest': 'Jun-Aug (Global)', 'origin': 'Global'},
 }
 
-# STATE MANAGEMENT
-last_known_prices = {}
-
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
+
+# ============ HELPER: CLEAN TEXT FOR PDF ============
+def clean_for_pdf(text):
+    """Removes emojis and non-latin characters for PDF compatibility"""
+    if not text: return ""
+    # Encode to ascii, ignore errors (drops emojis), decode back
+    return text.encode('latin-1', 'ignore').decode('latin-1')
 
 # ============ DATA ENGINE ============
 def fetch_commodity_data(symbol):
@@ -70,9 +74,8 @@ def get_harvest_status(symbol):
     harvest_months = WATCHLIST[symbol]['harvest']
     curr = datetime.now().strftime('%b')
     status = "OFF-SEASON"
-    # Simple check for key harvest months
-    if curr in ["Oct", "Nov", "Dec", "Jan"] and "Oct" in harvest_months: status = "🌾 PEAK HARVEST"
-    elif curr in ["Apr", "May", "Jun", "Jul"] and "Apr" in harvest_months: status = "🌾 PEAK HARVEST"
+    if curr in ["Oct", "Nov", "Dec", "Jan"] and "Oct" in harvest_months: status = "PEAK HARVEST"
+    elif curr in ["Apr", "May", "Jun", "Jul"] and "Apr" in harvest_months: status = "PEAK HARVEST"
     return f"{harvest_months} | {status}"
 
 def check_freight_crisis():
@@ -94,7 +97,7 @@ def generate_ai_content(symbol, price_data, mode="DAILY"):
             Act as Chief Procurement Officer. Briefing for {price_data['name']} (${price_data['price']} | {egp}/Ton).
             Seasonality: {harvest}.
             Return JSON: {{
-                "recommendation": "LOCK 🔒 / SPOT 🛒",
+                "recommendation": "LOCK / SPOT",
                 "summary": "2 sentences on price strategy.",
                 "risk": "Key supply chain risk.",
                 "targets": [{{"label": "Buy", "price": {price_data['price']*0.95}}}, {{"label": "Panic", "price": {price_data['price']*1.05}}}]
@@ -108,19 +111,17 @@ def generate_ai_content(symbol, price_data, mode="DAILY"):
         return json.loads(text)
     except: return {}
 
-# ============ CHART ENGINE (EXPANA STYLE) ============
+# ============ CHART ENGINE ============
 def generate_chart(name, current_price, targets, filename=None):
     try:
         plt.figure(figsize=(10, 5), facecolor='#ffffff')
         ax = plt.gca()
         
-        # History (Orange Solid)
         dates = [datetime.now() - timedelta(days=x) for x in range(30, 0, -1)]
         prices = [current_price * (1 + random.uniform(-0.02, 0.02)) for _ in range(30)]
         prices[-1] = current_price
         plt.plot(dates, prices, color='#f97316', linewidth=2, label='History')
         
-        # Forecast (Orange Dotted)
         f_dates = [datetime.now()]
         f_prices = [current_price]
         for i, t in enumerate(targets):
@@ -128,7 +129,6 @@ def generate_chart(name, current_price, targets, filename=None):
             f_prices.append(t['price'])
         plt.plot(f_dates, f_prices, color='#f97316', linestyle=':', marker='o')
         
-        # Bubbles
         for i, (d, p) in enumerate(zip(f_dates[1:], f_prices[1:])):
             label = targets[i].get('label', f'T{i}')
             plt.annotate(f"{label}\n${p:,.0f}", (d, p), xytext=(0, 15), textcoords='offset points',
@@ -150,7 +150,7 @@ def generate_chart(name, current_price, targets, filename=None):
             return buf
     except: return None
 
-# ============ PDF REPORT ENGINE ============
+# ============ PDF REPORT ENGINE (FIXED) ============
 class PDF(FPDF):
     def header(self):
         self.set_font('Arial', 'B', 16)
@@ -163,13 +163,16 @@ def generate_pdf_report():
     pdf = PDF()
     pdf.add_page()
     
-    # Freight Alert
+    # Freight Alert (Clean text)
     freight = check_freight_crisis()
     pdf.set_fill_color(255, 240, 240)
     pdf.set_font('Arial', 'B', 12)
-    pdf.cell(0, 10, f"⚠️ FREIGHT RISK: {freight.get('risk', 'UNKNOWN')}", 1, 1, 'L', 1)
+    risk_level = clean_for_pdf(freight.get('risk', 'UNKNOWN'))
+    pdf.cell(0, 10, f"FREIGHT RISK: {risk_level}", 1, 1, 'L', 1)
+    
     pdf.set_font('Arial', '', 10)
-    pdf.multi_cell(0, 6, f"Advice: {freight.get('advice', 'Check local forwarders.')}")
+    advice = clean_for_pdf(freight.get('advice', 'Check local forwarders.'))
+    pdf.multi_cell(0, 6, f"Advice: {advice}")
     pdf.ln(5)
     
     for symbol, info in WATCHLIST.items():
@@ -181,31 +184,36 @@ def generate_pdf_report():
         # Header
         pdf.set_font('Arial', 'B', 14)
         pdf.set_text_color(0, 51, 102)
-        pdf.cell(0, 8, f"{info['name']}", 0, 1, 'L')
+        pdf.cell(0, 8, clean_for_pdf(info['name']), 0, 1, 'L')
         pdf.set_text_color(0, 0, 0)
         
         # Info Grid
         pdf.set_font('Arial', '', 10)
         pdf.cell(50, 6, f"Price: ${data['price']:,.2f}", 0, 0)
         pdf.cell(60, 6, f"Landed: {data['egp_cost']:,.0f} EGP/Ton", 0, 1)
-        pdf.cell(0, 6, f"Harvest: {get_harvest_status(symbol)}", 0, 1)
+        pdf.cell(0, 6, f"Harvest: {clean_for_pdf(get_harvest_status(symbol))}", 0, 1)
         
         # Strategy
         pdf.set_font('Arial', 'B', 10)
-        pdf.cell(0, 8, f"STRATEGY: {ai.get('recommendation', 'WAIT')}", 0, 1)
+        rec = clean_for_pdf(ai.get('recommendation', 'WAIT'))
+        pdf.cell(0, 8, f"STRATEGY: {rec}", 0, 1)
+        
         pdf.set_font('Arial', '', 9)
-        pdf.multi_cell(0, 5, f"Summary: {ai.get('summary', 'No data')}\nRisk: {ai.get('risk', 'None')}")
+        summary = clean_for_pdf(ai.get('summary', 'No data'))
+        risk = clean_for_pdf(ai.get('risk', 'None'))
+        pdf.multi_cell(0, 5, f"Summary: {summary}\nRisk: {risk}")
         
         # Embed Chart
         chart_file = f"chart_{symbol.replace('=','')}.png"
         generate_chart(info['name'], data['price'], ai.get('targets', []), filename=chart_file)
-        pdf.image(chart_file, x=10, w=170)
-        os.remove(chart_file) # Clean up
+        if os.path.exists(chart_file):
+            pdf.image(chart_file, x=10, w=170)
+            os.remove(chart_file)
         
         pdf.ln(5)
         
     outfile = "AbuAuf_Report.pdf"
-    pdf.output(outfile)
+    pdf.output(outfile, 'F')
     return outfile
 
 # ============ TELEGRAM ============
@@ -240,16 +248,16 @@ def run_tips():
 
 def run_pdf():
     send_telegram("📄 Generating Board Report...")
-    pdf = generate_pdf_report()
-    send_telegram(doc=pdf)
+    try:
+        pdf = generate_pdf_report()
+        send_telegram(doc=pdf)
+    except Exception as e:
+        send_telegram(f"⚠️ PDF Gen Error: {str(e)}")
 
 def monitor_cycle():
     now = datetime.now()
-    # Weekly PDF (Mon 9am)
     if now.weekday() == 0 and now.hour == 9 and now.minute < 15: run_pdf(); return
-    # Hourly Tips (Top of hour)
     if now.minute < 5 and (START_HOUR <= now.hour <= END_HOUR): run_tips()
-    # 10-Min Snapshot (Always)
     run_snapshot()
 
 # ============ WEB SERVER ============
