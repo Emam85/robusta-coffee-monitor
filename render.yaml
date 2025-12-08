@@ -3,7 +3,7 @@ services:
     name: robusta-monitor
     env: python
     buildCommand: "pip install -r requirements.txt"
-    startCommand: "gunicorn monitor:app --timeout 120 --workers 1 --worker-class sync"
+    startCommand: "gunicorn monitor:app --timeout 120 --workers 1"
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.0
