@@ -1,0 +1,40 @@
+services:
+  - type: web
+    name: robusta-monitor
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn monitor:app
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
+      - key: EMAIL_PASSWORD
+        sync: false
+      - key: EMAIL_TO
+        sync: false
+    healthCheckPath: /health
+
+  - type: cron
+    name: robusta-monitor-cron
+    env: python
+    schedule: "*/10 * * * *"
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -c "from monitor import monitor_all_commodities; monitor_all_commodities()"
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
+      - key: EMAIL_PASSWORD
+        sync: false
+      - key: EMAIL_TO
+        sync: false
