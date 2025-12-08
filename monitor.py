@@ -419,6 +419,27 @@ def trigger_monitor():
 def health():
     return jsonify({'status': 'healthy'})
 
+
+@app.route('/check')
+def manual_check():
+    """Manual trigger for monitoring cycle"""
+    try:
+        print("🔄 Manual check triggered via /check endpoint")
+        result = run_monitor()
+        return jsonify({
+            "status": "success",
+            "message": "Monitor cycle completed",
+            "result": result,
+            "timestamp": datetime.now().isoformat()
+        })
+    except Exception as e:
+        print(f"❌ Error in manual check: {e}")
+        return jsonify({
+            "status": "error",
+            "message": str(e),
+            "timestamp": datetime.now().isoformat()
+        }), 500
+
 if __name__ == '__main__':
     # For local testing
     if os.environ.get('LOCAL_TEST'):
