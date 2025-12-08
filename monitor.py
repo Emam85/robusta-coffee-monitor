@@ -1,10 +1,11 @@
 """
-Robusta Coffee Monitor - Ultimate Edition (Telegram Only)
+Abu Auf Procurement Monitor - Strategic Edition
 Features:
-- Real-time 24/7 Monitoring
-- Weekly "Market Intelligence" Briefings (Telegram)
-- Advanced AI Charts (Expana Style)
-- Hedging Recommendations
+- Real-time 10-Minute Price Snapshots
+- Focused Watchlist: Coffee, Cocoa, Sugar, Wheat
+- EGP Landed Cost Calculator
+- Hourly "Procurement Tips"
+- Weekly Strategic Briefings
 """
 import os
 import json
@@ -25,16 +26,20 @@ TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
 TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID')
 GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
 
-# Watchlist
+# ABU AUF SETTINGS
+USD_EGP_RATE = 50.5
+START_HOUR = 9
+END_HOUR = 17
+
 WATCHLIST = {
-    'KC=F': 'Coffee Arabica (ICE)',
     'RC=F': 'Robusta Coffee (ICE)',
+    'KC=F': 'Coffee Arabica (ICE)',
     'CC=F': 'Cocoa (ICE)',
     'SB=F': 'Sugar (ICE)',
-    'CT=F': 'Cotton (ICE)',
     'ZW=F': 'Wheat (CBOT)',
-    'GC=F': 'Gold (COMEX)',
 }
+
+last_known_prices = {}
 
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
@@ -43,95 +48,84 @@ if GEMINI_API_KEY:
 def fetch_commodity_data(symbol):
     from commodity_fetcher import fetch_commodity_data as fetch_multi
     try:
-        return fetch_multi(symbol, WATCHLIST.get(symbol, symbol))
+        data = fetch_multi(symbol, WATCHLIST.get(symbol, symbol))
+        if data:
+            # CALCULATE EGP COST
+            price = data['price']
+            egp_cost = 0
+            
+            if symbol == 'RC=F' or symbol == 'CC=F': # USD/Ton
+                egp_cost = price * USD_EGP_RATE
+            elif symbol == 'KC=F' or symbol == 'SB=F': # Cents/lb -> USD/Ton
+                usd_ton = (price / 100) * 2204.62
+                egp_cost = usd_ton * USD_EGP_RATE
+            elif symbol == 'ZW=F': # Cents/Bushel -> USD/Ton
+                usd_ton = (price / 100) * 36.74
+                egp_cost = usd_ton * USD_EGP_RATE
+                
+            data['egp_cost'] = round(egp_cost, 2)
+            return data
     except Exception as e:
         print(f"Error fetching {symbol}: {e}")
     return None
 
-# ============ AI ANALYSIS ENGINE ============
-def generate_analysis(symbol, price_data, mode="DAILY"):
+# ============ AI ENGINE ============
+def generate_ai_content(symbol, price_data, mode="DAILY"):
     try:
         model = genai.GenerativeModel('gemini-2.0-flash-exp')
+        egp_price_str = f"{price_data['egp_cost']:,.0f} EGP/Ton"
         
-        if mode == "WEEKLY":
+        if mode == "TIP":
             prompt = f"""
-            Act as a Senior Commodity Strategist. Write a Briefing for {price_data['name']} (${price_data['price']}).
-            
-            Return ONLY valid JSON:
-            {{
-                "trend": "BULLISH 🟢" or "BEARISH 🔴",
-                "hedging_action": "FULL COVER" or "PARTIAL" or "AVOID",
-                "insight": "Short professional insight about tariffs, weather, or logistics.",
-                "support": "$XXXX",
-                "resistance": "$XXXX",
-                "targets": [
-                    {{"label": "T1", "price": {price_data['price'] * 0.98}}},
-                    {{"label": "T2", "price": {price_data['price'] * 1.05}}},
-                    {{"label": "T3", "price": {price_data['price'] * 1.08}}}
-                ]
-            }}
+            Act as a Procurement Manager for Abu Auf. 
+            Analyze {price_data['name']} at ${price_data['price']} ({egp_price_str}).
+            Is this a buying opportunity? Output ONLY a short, sharp tip (max 20 words).
             """
-        else:
+            
+        elif mode == "WEEKLY":
             prompt = f"""
-            Analyze {price_data['name']} (${price_data['price']}). 
+            Act as a Global Sourcing Director. Strategic Briefing for {price_data['name']}.
+            Global Price: ${price_data['price']} | Landed: {egp_price_str}.
             Return JSON:
             {{
-                "trend": "UP 🟢" or "DOWN 🔴",
-                "action": "BUY" or "SELL",
-                "prediction": "One short forecast.",
+                "trend": "BULLISH 🟢 / BEARISH 🔴",
+                "sourcing_action": "LOCK CONTRACT 🔒 / BUY SPOT 🛒 / WAIT ✋",
+                "insight": "Insight on landed cost and risks.",
                 "targets": [
-                    {{"label": "T1", "price": {price_data['price'] * 1.01}}},
-                    {{"label": "T2", "price": {price_data['price'] * 1.03}}}
+                    {{"label": "Ideal Buy", "price": {price_data['price'] * 0.95}}},
+                    {{"label": "Panic Level", "price": {price_data['price'] * 1.05}}}
                 ]
             }}
             """
-
+        
         response = model.generate_content(prompt)
         text = response.text.replace('```json', '').replace('```', '').strip()
+        if mode == "TIP": return text
         return json.loads(text)
+        
     except Exception as e:
-        print(f"AI Error: {e}")
-        return {
-            "trend": "NEUTRAL", "hedging_action": "HOLD", "action": "WAIT",
-            "insight": "Data unavailable", "prediction": "No data",
-            "support": "N/A", "resistance": "N/A",
-            "targets": [{"label": "T1", "price": price_data['price']}]
-        }
+        if mode == "TIP": return "Market volatile. Check offers."
+        return {"trend": "NEUTRAL", "sourcing_action": "WAIT", "targets": []}
 
-# ============ CHARTING ENGINE ============
+# ============ CHART ENGINE ============
 def generate_chart(name, current_price, targets):
     try:
         plt.figure(figsize=(10, 6), facecolor='#ffffff')
         ax = plt.gca()
-        ax.set_facecolor('white')
-        
         dates = [datetime.now() - timedelta(days=x) for x in range(30, 0, -1)]
         prices = [current_price * (1 + random.uniform(-0.05, 0.05)) for _ in range(30)]
         prices[-1] = current_price
-        
-        plt.plot(dates, prices, color='#0056b3', linewidth=2.5, label='History')
+        plt.plot(dates, prices, color='#0056b3', linewidth=2.5, label='Price')
         
         forecast_dates = [datetime.now()]
         forecast_prices = [current_price]
-        
         for i, t in enumerate(targets):
-            future_date = datetime.now() + timedelta(weeks=i+1)
-            forecast_dates.append(future_date)
+            forecast_dates.append(datetime.now() + timedelta(weeks=i+1))
             forecast_prices.append(t['price'])
             
-        plt.plot(forecast_dates, forecast_prices, color='#ff6b00', linestyle='--', linewidth=2.5, marker='o', markersize=6, label='AI Forecast')
-        
-        for i, (d, p) in enumerate(zip(forecast_dates[1:], forecast_prices[1:])):
-            label = targets[i].get('label', f'T{i}')
-            plt.annotate(
-                f"{label}\n${p:,.2f}", (d, p), xytext=(0, 15), textcoords='offset points',
-                ha='center', fontsize=9, fontweight='bold', color='#333',
-                bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="#ff6b00", alpha=0.9)
-            )
-
-        plt.title(f"{name} - Price Projection", fontsize=14, pad=15, fontweight='bold', color='#333')
+        plt.plot(forecast_dates, forecast_prices, color='#ff6b00', linestyle='--', marker='o')
+        plt.title(f"{name} Projection", fontsize=12, fontweight='bold')
         plt.grid(True, linestyle=':', alpha=0.4)
-        plt.legend(loc='upper left')
         plt.gcf().autofmt_xdate()
         
         buf = io.BytesIO()
@@ -139,111 +133,89 @@ def generate_chart(name, current_price, targets):
         buf.seek(0)
         plt.close()
         return buf
-    except Exception as e:
-        print(f"Chart Error: {e}")
-        return None
+    except: return None
 
 # ============ TELEGRAM ENGINE ============
-def send_telegram_message(text):
+def send_telegram(text=None, photo=None):
     try:
-        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-        payload = {'chat_id': TELEGRAM_CHAT_ID, 'text': text, 'parse_mode': 'HTML'}
-        requests.post(url, json=payload, timeout=10)
-    except Exception as e:
-        print(f"Telegram error: {e}")
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/"
+        if photo:
+            requests.post(url + "sendPhoto", data={'chat_id': TELEGRAM_CHAT_ID, 'caption': text, 'parse_mode': 'HTML'}, files={'photo': ('chart.png', photo, 'image/png')})
+        else:
+            requests.post(url + "sendMessage", json={'chat_id': TELEGRAM_CHAT_ID, 'text': text, 'parse_mode': 'HTML'})
+    except Exception as e: print(f"Telegram Fail: {e}")
 
-def send_telegram_photo(caption, image_buffer):
-    try:
-        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
-        files = {'photo': ('chart.png', image_buffer, 'image/png')}
-        data = {'chat_id': TELEGRAM_CHAT_ID, 'caption': caption, 'parse_mode': 'HTML'}
-        requests.post(url, data=data, files=files, timeout=20)
-    except Exception as e:
-        print(f"Telegram photo error: {e}")
-
-# ============ REPORT LOGIC ============
+# ============ REPORTING LOGIC ============
 def run_weekly_report():
-    print("📊 Generating Weekly Report for Telegram...")
-    
-    header = f"""
-☕ <b>WEEKLY MARKET INTELLIGENCE</b>
-📅 {datetime.now().strftime('%d %B %Y')}
-
-<i>Strategic Insights & Hedging Advice</i>
-━━━━━━━━━━━━━━━━━━━━━━
-"""
-    send_telegram_message(header)
-    
+    send_telegram(f"🏭 <b>WEEKLY SOURCING BRIEF</b>\n🇪🇬 Rate: {USD_EGP_RATE} EGP/USD")
     for symbol, name in WATCHLIST.items():
         data = fetch_commodity_data(symbol)
         if data:
-            analysis = generate_analysis(symbol, data, mode="WEEKLY")
-            chart_buf = generate_chart(name, data['price'], analysis['targets'])
+            analysis = generate_ai_content(symbol, data, mode="WEEKLY")
+            chart = generate_chart(name, data['price'], analysis['targets'])
+            caption = f"<b>{name}</b>\n💵 ${data['price']:,.2f}\n🇪🇬 {data['egp_cost']:,.0f} EGP\n<b>ACTION: {analysis.get('sourcing_action')}</b>\n<i>{analysis.get('insight')}</i>"
+            send_telegram(caption, chart)
+            time.sleep(2)
+
+def run_hourly_tips():
+    tips = "🔔 <b>HOURLY TIPS</b>\n\n"
+    for symbol, name in WATCHLIST.items():
+        data = fetch_commodity_data(symbol)
+        if data:
+            tip = generate_ai_content(symbol, data, mode="TIP")
+            tips += f"📦 <b>{name.split()[0]}:</b> {tip}\n"
+    send_telegram(tips)
+
+def send_10min_snapshot():
+    # Sends a clean list of current prices every 10 mins
+    snapshot = f"⏱️ <b>MARKET SNAPSHOT ({datetime.now().strftime('%H:%M')})</b>\n\n"
+    for symbol, name in WATCHLIST.items():
+        data = fetch_commodity_data(symbol)
+        if data:
+            # Check for sudden volatility (>1.5%)
+            last_price = last_known_prices.get(symbol)
+            alert = ""
+            if last_price:
+                change = ((data['price'] - last_price) / last_price) * 100
+                if abs(change) >= 1.5: alert = " 🚨 <b>VOLATILE</b>"
             
-            action = analysis.get('hedging_action', 'WAIT')
-            icon = "🔴" if "AVOID" in action else "🟢" if "FULL" in action else "🟡"
+            snapshot += f"▫️ <b>{name.split()[0]}:</b> ${data['price']:,.2f} {alert}\n"
+            last_known_prices[symbol] = data['price']
             
-            caption = f"""
-<b>{name}</b>
-💵 Price: ${data['price']:,.2f}
-📉 Trend: {analysis['trend']}
+    send_telegram(snapshot)
 
-🛡️ <b>HEDGING: {action} {icon}</b>
-<i>"{analysis.get('insight', 'No data')}"</i>
-
-• Support: {analysis.get('support')}
-• Resistance: {analysis.get('resistance')}
-"""
-            if chart_buf:
-                send_telegram_photo(caption, chart_buf)
-            
-            # Avoid hitting Telegram limits
-            time.sleep(1)
-
-    print("✅ Weekly Report Sent to Telegram")
-
-def monitor_all_commodities():
-    print(f"\n🔄 Starting Daily Monitor...")
-    
-    # Monday 9AM Check
+def monitor_cycle():
+    print(f"\n🔄 Running Monitor Cycle...")
     now = datetime.now()
+    
+    # 1. Weekly Report (Monday 9 AM)
     if now.weekday() == 0 and now.hour == 9 and now.minute < 15:
         run_weekly_report()
-        return 
-        
-    for symbol, name in WATCHLIST.items():
-        data = fetch_commodity_data(symbol)
-        if data:
-            analysis = generate_analysis(symbol, data, mode="DAILY")
-            chart_buf = generate_chart(name, data['price'], analysis['targets'])
-            
-            caption = f"""
-<b>{name}</b>
-💰 Price: ${data['price']:,.2f}
-📊 Trend: {analysis['trend']}
-🎯 Action: {analysis['action']}
-🔮 Forecast: {analysis['prediction']}
-"""
-            if chart_buf:
-                send_telegram_photo(caption, chart_buf)
+        return
 
-    print("✅ Daily Cycle Complete")
+    # 2. Hourly Tips (Start of hour)
+    if now.minute < 5 and (START_HOUR <= now.hour <= END_HOUR):
+        run_hourly_tips()
+    
+    # 3. ALWAYS send 10-min Snapshot (The price update)
+    send_10min_snapshot()
+
+    print("✅ Cycle Complete")
 
 app = Flask(__name__)
 
 @app.route('/')
-def home():
-    return jsonify({'status': 'online'})
+def home(): return jsonify({'status': 'online'})
 
 @app.route('/monitor')
-def trigger_daily():
-    Thread(target=monitor_all_commodities).start()
+def trigger():
+    Thread(target=monitor_cycle).start()
     return jsonify({'status': 'started'})
 
 @app.route('/weekly')
-def trigger_weekly():
+def weekly():
     Thread(target=run_weekly_report).start()
-    return jsonify({'status': 'started', 'message': 'Sending Weekly Briefing to Telegram...'})
+    return jsonify({'status': 'started'})
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 10000)))
