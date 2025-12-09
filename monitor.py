@@ -25,6 +25,7 @@ matplotlib.use('Agg')  # Non-interactive backend
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from io import BytesIO
+import tempfile
 import base64
 
 # Import intelligent scrapers
@@ -445,7 +446,7 @@ def generate_weekly_pdf_report():
         pdf.multi_cell(0, 4, 'This report is generated using real-time market data and AI-powered analysis. Data sources include ICE Futures, Barchart, and Investing.com. For internal use only.')
         
         # Save PDF
-        pdf_path = f'/tmp/abu_auf_weekly_{datetime.now().strftime("%Y%m%d")}.pdf'
+        pdf_path = tempfile.mktemp(suffix='.pdf', prefix='abu_auf_weekly_')
         pdf.output(pdf_path)
         
         return pdf_path
@@ -658,9 +659,12 @@ def monitor_commodities():
     
     # Fetch and store all commodity data
     for symbol, info in WATCHLIST.items():
-        price_data = fetch_commodity_data(symbol)
-        
-        if price_data:
+        try:
+            price_data = fetch_commodity_data(symbol)
+            
+            if not price_data:
+                print(f"  ⚠️ No data for {info['name']}, skipping...")
+                continue
             timestamp = datetime.now().isoformat()
             
             # Initialize history if needed
@@ -670,6 +674,10 @@ def monitor_commodities():
             # Store price with timestamp
             price_history[symbol].append((timestamp, price_data['price']))
             
+            # Memory protection: Keep max 144 records (24 hours)
+            if len(price_history[symbol]) > 144:
+                price_history[symbol] = price_history[symbol][-144:]
+            
             # Keep only today's data (clear at midnight)
             if datetime.now().hour == 0 and datetime.now().minute < 10:
                 price_history[symbol] = []
@@ -677,6 +685,9 @@ def monitor_commodities():
                     del daily_start_prices[symbol]
             
             print(f"  ✅ {info['name']}: ${price_data['price']:.2f} ({price_data.get('source', 'N/A')})")
+        except Exception as e:
+            print(f"  ❌ Error fetching {info['name']}: {e}")
+            continue
 
 def send_hourly_report():
     """Send hourly report with Robusta chart and all commodities summary"""
