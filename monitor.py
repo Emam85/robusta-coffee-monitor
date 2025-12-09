@@ -1,9 +1,9 @@
 """
-Abu Auf Procurement Monitor - Diamond Edition
+Abu Auf Procurement Monitor - Diamond Edition (Full Analysis)
 Features:
-- 🎨 Professional PDF Dashboard (Native Colors - No Emojis)
+- 🧠 Deep AI Analysis for Hourly Tips
+- 🎨 Professional PDF Dashboard
 - ⏱️ 10-Min Market Snapshots
-- 🔔 Hourly Buying Tips (6 AM - 6 PM)
 - 🌾 Harvest & Freight Intelligence
 - 🇪🇬 Landed Cost Calculator
 """
@@ -45,16 +45,10 @@ WATCHLIST = {
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
 
-# ============ SAFETY HELPER (Prevents PDF Crashes) ============
+# ============ HELPERS ============
 def clean_for_pdf(text):
-    """
-    Aggressively strips emojis and non-latin characters.
-    This guarantees the PDF generation will NEVER crash.
-    """
     if not text: return ""
-    # Replace smart quotes or dashes that might break Latin-1
     text = text.replace("’", "'").replace("–", "-").replace("“", '"').replace("”", '"')
-    # Encode to ASCII, ignoring errors (this removes emojis), then decode back
     return text.encode('latin-1', 'ignore').decode('latin-1')
 
 def get_cairo_time(): return datetime.utcnow() + timedelta(hours=2)
@@ -71,7 +65,6 @@ def fetch_commodity_data(symbol):
             elif symbol in ['KC=F', 'SB=F', 'ZL=F']: egp_cost = (price / 100) * 2204.62 * USD_EGP_RATE
             elif symbol == 'ZW=F': egp_cost = (price / 100) * 36.74 * USD_EGP_RATE
             elif symbol == 'PO=F': egp_cost = (price * 0.23) * USD_EGP_RATE
-            
             data['egp_cost'] = round(egp_cost, 2)
             return data
     except: return None
@@ -89,22 +82,32 @@ def generate_ai_content(symbol, price_data, mode="DAILY"):
         model = genai.GenerativeModel('gemini-2.0-flash-exp')
         egp = f"{price_data['egp_cost']:,.0f}"
         
+        # SHARED PROMPT LOGIC (Used for both TIP and PDF to ensure consistency)
+        # We now ask for JSON in TIP mode too for better formatting
         if mode == "TIP":
-            return model.generate_content(f"Procurement Tip for {price_data['name']} (${price_data['price']}). Max 15 words.").text
-        
-        # PDF Mode
-        prompt = f"""
-        Act as Procurement Director. Briefing for {price_data['name']} (${price_data['price']} | {egp} EGP/Ton).
-        Return JSON: {{
-            "strategy": "BUY NOW / WAIT / HEDGE",
-            "trend": "UPTREND / DOWNTREND",
-            "summary": "1 short sentence reason.",
-            "targets": [
-                {{"label": "Support", "price": {price_data['price']*0.98}}},
-                {{"label": "Resist", "price": {price_data['price']*1.02}}}
-            ]
-        }}
-        """
+            prompt = f"""
+            Act as Abu Auf Procurement Manager. Analyze {price_data['name']} (${price_data['price']}).
+            Return JSON: {{
+                "action": "LOCK 🔒 / SPOT 🛒 / WAIT ✋",
+                "analysis": "One sentence explaining WHY based on market trend or harvest.",
+                "risk": "High/Med/Low"
+            }}
+            """
+        else:
+            # PDF Mode (More targets)
+            prompt = f"""
+            Act as Procurement Director. Briefing for {price_data['name']} (${price_data['price']} | {egp} EGP/Ton).
+            Return JSON: {{
+                "strategy": "BUY NOW / WAIT / HEDGE",
+                "trend": "UPTREND / DOWNTREND",
+                "summary": "1 short sentence reason.",
+                "targets": [
+                    {{"label": "Support", "price": {price_data['price']*0.98}}},
+                    {{"label": "Resist", "price": {price_data['price']*1.02}}}
+                ]
+            }}
+            """
+            
         text = model.generate_content(prompt).text.replace('```json', '').replace('```', '').strip()
         return json.loads(text)
     except: return {}
@@ -120,7 +123,7 @@ def generate_chart(name, current_price, targets, filename):
         dates = [datetime.now() - timedelta(days=x) for x in range(30, 0, -1)]
         prices = [current_price * (1 + random.uniform(-0.02, 0.02)) for _ in range(30)]
         prices[-1] = current_price
-        plt.plot(dates, prices, color='#6C63FF', linewidth=2) # Purple line
+        plt.plot(dates, prices, color='#6C63FF', linewidth=2)
         
         if targets:
             f_date = datetime.now() + timedelta(weeks=2)
@@ -135,35 +138,30 @@ def generate_chart(name, current_price, targets, filename):
         return filename
     except: return None
 
-# ============ DASHBOARD PDF ENGINE ============
+# ============ PDF ENGINE ============
 class DashboardPDF(FPDF):
     def header(self):
-        # Header Background (Purple)
         self.set_fill_color(108, 99, 255)
         self.rect(0, 0, 210, 35, 'F')
-        # Title
         self.set_font('Arial', 'B', 22)
         self.set_text_color(255, 255, 255)
         self.set_xy(10, 10)
         self.cell(0, 10, 'ABU AUF - MARKET UPDATE', 0, 1, 'L')
         self.set_font('Arial', '', 10)
-        self.cell(0, 8, f"Generated: {datetime.now().strftime('%d %b %Y')} | USD Rate: {USD_EGP_RATE}", 0, 1, 'L')
+        self.cell(0, 8, f"Generated: {datetime.now().strftime('%d %b %Y')} | Rate: {USD_EGP_RATE}", 0, 1, 'L')
         self.ln(10)
 
     def card(self, name, price, egp, strategy, trend, summary, chart_path):
-        # Card Background
         y = self.get_y()
         self.set_fill_color(252, 252, 252)
         self.set_draw_color(220, 220, 220)
         self.rect(10, y, 190, 45, 'FD')
         
-        # Name
         self.set_xy(15, y+5)
         self.set_font('Arial', 'B', 12)
         self.set_text_color(40, 40, 40)
         self.cell(60, 6, clean_for_pdf(name), 0, 2)
         
-        # Prices
         self.set_font('Arial', 'B', 14)
         self.set_text_color(0, 0, 0)
         self.cell(60, 8, f"${price:,.2f}", 0, 2)
@@ -171,65 +169,45 @@ class DashboardPDF(FPDF):
         self.set_text_color(100, 100, 100)
         self.cell(60, 5, f"Landed: {egp:,.0f} EGP", 0, 0)
         
-        # Strategy Badge (Ink Color logic instead of Emoji)
         self.set_xy(80, y+8)
         self.set_font('Arial', 'B', 11)
-        if "BUY" in strategy or "LOCK" in strategy:
-            self.set_text_color(0, 150, 0) # Green Ink
-        else:
-            self.set_text_color(200, 50, 50) # Red Ink
+        if "BUY" in strategy or "LOCK" in strategy: self.set_text_color(0, 150, 0)
+        else: self.set_text_color(200, 50, 50)
         self.cell(40, 8, clean_for_pdf(strategy), 0, 2)
         
-        # Trend & Summary
         self.set_font('Arial', 'I', 9)
         self.set_text_color(80, 80, 80)
         self.cell(40, 5, clean_for_pdf(trend), 0, 2)
         self.set_font('Arial', '', 8)
         self.multi_cell(50, 4, clean_for_pdf(summary))
         
-        # Chart
         if chart_path and os.path.exists(chart_path):
             self.image(chart_path, x=135, y=y+2, w=60, h=40)
             os.remove(chart_path)
-            
-        self.ln(35) # Move down
+        self.ln(35)
 
 def generate_pdf_report():
     pdf = DashboardPDF()
     pdf.add_page()
-    
-    # Freight Alert (Safe Red Text)
     freight = check_freight_crisis()
     pdf.set_font('Arial', 'B', 10)
     pdf.set_text_color(180, 0, 0)
     pdf.cell(0, 10, f"LOGISTICS ALERT: {clean_for_pdf(freight)}", 0, 1, 'C')
-    pdf.set_text_color(0, 0, 0) # Reset color
     
-    # Loop
     for symbol, info in WATCHLIST.items():
         data = fetch_commodity_data(symbol)
         if not data: continue
         ai = generate_ai_content(symbol, data, mode="PDF")
-        
         chart_file = f"chart_{symbol.replace('=','')}.png"
         generate_chart(info['name'], data['price'], ai.get('targets', []), chart_file)
-        
-        pdf.card(
-            info['name'], 
-            data['price'], 
-            data['egp_cost'],
-            ai.get('strategy', 'WAIT'),
-            ai.get('trend', 'NEUTRAL'),
-            ai.get('summary', ''),
-            chart_file
-        )
+        pdf.card(info['name'], data['price'], data['egp_cost'], ai.get('strategy', 'WAIT'), ai.get('trend', 'NEUTRAL'), ai.get('summary', ''), chart_file)
         pdf.ln(5)
-        
+    
     outfile = "AbuAuf_Dashboard.pdf"
     pdf.output(outfile, 'F')
     return outfile
 
-# ============ TELEGRAM ============
+# ============ TELEGRAM & LOGIC ============
 def send_telegram(text=None, doc=None):
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/"
@@ -239,7 +217,26 @@ def send_telegram(text=None, doc=None):
             requests.post(url + "sendMessage", json={'chat_id': TELEGRAM_CHAT_ID, 'text': text, 'parse_mode': 'HTML'})
     except Exception as e: print(f"Telegram Error: {e}")
 
-# ============ SCHEDULER ============
+def run_tips_logic():
+    # Send Header First
+    send_telegram("🔔 <b>HOURLY STRATEGIC ANALYSIS</b>")
+    
+    for s, i in WATCHLIST.items():
+        d = fetch_commodity_data(s)
+        if d: 
+            # Get Rich JSON Analysis
+            ai = generate_ai_content(s, d, mode="TIP")
+            
+            # Format nicely
+            msg = f"""
+📦 <b>{i['name'].split()[0]}</b> (${d['price']:,.2f})
+⚡ <b>Action:</b> {ai.get('action', 'WAIT')}
+📝 <b>Reason:</b> {ai.get('analysis', 'No data')}
+⚠️ <b>Risk:</b> {ai.get('risk', 'Medium')}
+"""
+            send_telegram(msg)
+            time.sleep(1) # Prevent flooding
+
 def monitor_cycle():
     cairo = get_cairo_time()
     # Weekly (Mon 9 AM)
@@ -247,26 +244,32 @@ def monitor_cycle():
         send_telegram("📊 Generating PDF Dashboard...")
         send_telegram(doc=generate_pdf_report())
         return
-    # Hourly Tips
+    # Hourly Tips (Auto)
     if cairo.minute < 5 and (START_HOUR <= cairo.hour <= END_HOUR):
-        msg = "🔔 <b>SOURCING TIPS</b>\n"
-        for s, i in WATCHLIST.items():
-            d = fetch_commodity_data(s)
-            if d: msg += f"📦 {i['name'].split()[0]}: {generate_ai_content(s, d, mode='TIP')}\n"
-        send_telegram(msg)
-    # 10-Min Snapshot
+        run_tips_logic()
+    # 10-Min Snapshot (Auto)
     msg = f"⏱️ <b>SNAPSHOT ({cairo.strftime('%I:%M %p')})</b>\n"
     for s, i in WATCHLIST.items():
         d = fetch_commodity_data(s)
         if d: msg += f"▫️ {i['name'].split()[0]}: ${d['price']:,.0f}\n"
     send_telegram(msg)
 
-# ============ WEB ============
+# ============ WEB SERVER ============
 app = Flask(__name__)
+
 @app.route('/')
 def home(): return jsonify({'status': 'online'})
+
 @app.route('/monitor')
-def tick(): Thread(target=monitor_cycle).start(); return jsonify({'status': 'ok'})
+def tick(): 
+    Thread(target=monitor_cycle).start()
+    return jsonify({'status': 'snapshot_sent'})
+
+@app.route('/tips')
+def tips(): 
+    Thread(target=run_tips_logic).start()
+    return jsonify({'status': 'tips_sent'})
+
 @app.route('/pdf')
 def pdf(): 
     t = Thread(target=lambda: send_telegram(doc=generate_pdf_report()))
