@@ -56,50 +56,76 @@ def extract_price_from_html(html):
         
     return None
 
-def extract_multiple_contracts_from_html(html):
-    """Extract data for multiple contracts from Barchart quotes page"""
+def extract_arabica_contracts_from_table(html):
+    """
+    Extract Arabica Coffee contracts from Barchart table
+    Targets the specific table structure shown in the screenshot
+    """
     contracts = []
     
-    # Look for table rows with contract data
-    # Pattern: <tr data-symbol="KCF26" ...> ... </tr>
-    row_pattern = r'<tr[^>]*data-symbol="([^"]+)"[^>]*>(.*?)</tr>'
-    rows = re.findall(row_pattern, html, re.DOTALL)
-    
-    for symbol, row_content in rows:
-        try:
-            # Extract contract month/year from symbol (e.g., KCF26 -> Mar '26)
-            contract_code = symbol[-3:]  # Last 3 chars (e.g., F26)
+    try:
+        # Look for table rows containing "Arabica Coffee 4/5"
+        # Pattern matches: <tr>...<a href="...">Arabica Coffee 4/5 (XXX 'YY)</a>...price data...</tr>
+        
+        # Find all table rows with Arabica Coffee
+        row_pattern = r'<tr[^>]*>.*?Arabica Coffee 4/5 \(([A-Za-z]+) \'(\d+)\).*?</tr>'
+        matches = re.findall(row_pattern, html, re.DOTALL)
+        
+        if not matches:
+            print("  ⚠️ Could not find Arabica Coffee rows in table")
+            return None
+        
+        # For each row, extract detailed data
+        for month_name, year in matches[:2]:  # Get first 2 contracts
+            # Convert month name to contract code
+            month_map = {
+                'Dec': 'Z', 'Mar': 'H', 'May': 'K', 
+                'Jul': 'N', 'Sep': 'U'
+            }
+            month_code = month_map.get(month_name, month_name[0])
+            symbol = f"KC{month_code}{year}"
             
-            # Extract price
-            price_match = re.search(r'data-last-price="([\d,.]+)"', row_content)
+            # Find the specific row for this contract
+            row_search = f'Arabica Coffee 4/5 \\({month_name} \'{year}\\)'
+            row_start = html.find(row_search)
+            if row_start == -1:
+                continue
+            
+            # Extract the table row
+            row_end = html.find('</tr>', row_start)
+            row_html = html[row_start:row_end]
+            
+            # Extract price (Latest column)
+            price_match = re.search(r'<td[^>]*>[\s\n]*([\d,.]+)[\s\n]*</td>', row_html)
             if not price_match:
-                price_match = re.search(r'<td[^>]*>\s*([\d,.]+)\s*</td>', row_content)
+                continue
+            price = float(price_match.group(1).replace(',', ''))
             
-            if price_match:
-                price = float(price_match.group(1).replace(',', ''))
-                
-                # Extract change
-                change_match = re.search(r'data-change="([+-]?[\d,.]+)"', row_content)
-                change = float(change_match.group(1).replace(',', '')) if change_match else 0
-                
-                # Extract high/low if available
-                high_match = re.search(r'data-high="([\d,.]+)"', row_content)
-                low_match = re.search(r'data-low="([\d,.]+)"', row_content)
-                high = float(high_match.group(1).replace(',', '')) if high_match else price
-                low = float(low_match.group(1).replace(',', '')) if low_match else price
-                
-                contracts.append({
-                    'symbol': symbol,
-                    'contract': contract_code,
-                    'price': price,
-                    'change': change,
-                    'high': high,
-                    'low': low
-                })
-        except Exception as e:
-            continue
-    
-    return contracts
+            # Extract change
+            change_match = re.search(r'<td[^>]*>[\s\n]*([+-]?[\d,.]+)[\s\n]*</td>', row_html)
+            change = float(change_match.group(1).replace(',', '')) if change_match else 0
+            
+            # Extract high and low
+            high_low_matches = re.findall(r'<td[^>]*>[\s\n]*([\d,.]+)[\s\n]*</td>', row_html)
+            high = float(high_low_matches[2].replace(',', '')) if len(high_low_matches) > 2 else price
+            low = float(high_low_matches[3].replace(',', '')) if len(high_low_matches) > 3 else price
+            
+            contracts.append({
+                'symbol': symbol,
+                'contract': f"{month_code}{year}",
+                'price': price,
+                'change': change,
+                'high': high,
+                'low': low
+            })
+            
+            print(f"  ✅ Parsed {symbol}: ${price:.2f}")
+        
+        return contracts if len(contracts) >= 2 else None
+        
+    except Exception as e:
+        print(f"  ⚠️ Error parsing Arabica table: {e}")
+        return None
 
 # ============ METHOD 1: Official Hidden API ============
 def method_1_api(symbol="RMF26"):
@@ -211,75 +237,34 @@ def get_barchart_robusta_jan26():
 # ============ ARABICA COFFEE (Last 2 Contracts) ============
 def get_barchart_arabica_last2():
     """
-    Get Arabica Coffee last 2 active contracts from Barchart
+    Get Arabica Coffee 4/5 last 2 active contracts from Barchart
+    Uses XF symbols (Arabica Coffee 4/5) not KC (standard Arabica)
+    Fetches: Dec '25 (XFZ25) and Mar '26 (XFH26)
     Returns: List of 2 contract dictionaries with price, change, high, low
     """
-    print("\n🌊 Fetching Arabica Last 2 Contracts from Barchart...")
+    print("\n🌊 Fetching Arabica Coffee 4/5 Last 2 Contracts from Barchart...")
     
-    # Get the quotes overview page which lists all contracts
-    url = "https://www.barchart.com/futures/quotes/KC*0/futures-prices"
+    # Define the exact contracts we want (XF = Arabica Coffee 4/5)
+    contracts_to_fetch = [
+        {'symbol': 'XFZ25', 'contract': 'Z25', 'name': 'Dec \'25'},
+        {'symbol': 'XFH26', 'contract': 'H26', 'name': 'Mar \'26'}
+    ]
     
-    # Try curl_cffi first for best results
-    if HAS_CURL_CFFI:
-        try:
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
-            }
-            response = cf_requests.get(url, headers=headers, impersonate="chrome120", timeout=10)
-            
-            if response.status_code == 200:
-                contracts = extract_multiple_contracts_from_html(response.text)
-                if len(contracts) >= 2:
-                    # Return first 2 contracts (most recent)
-                    return [
-                        {
-                            'symbol': contracts[0]['symbol'],
-                            'contract': contracts[0]['contract'],
-                            'price': contracts[0]['price'],
-                            'change': contracts[0]['change'],
-                            'high': contracts[0]['high'],
-                            'low': contracts[0]['low'],
-                            'source': 'Barchart (TLS)'
-                        },
-                        {
-                            'symbol': contracts[1]['symbol'],
-                            'contract': contracts[1]['contract'],
-                            'price': contracts[1]['price'],
-                            'change': contracts[1]['change'],
-                            'high': contracts[1]['high'],
-                            'low': contracts[1]['low'],
-                            'source': 'Barchart (TLS)'
-                        }
-                    ]
-        except Exception as e:
-            print(f"  ⚠️ TLS method failed: {e}")
-    
-    # Fallback: Get known front month contracts manually
-    # Coffee months: H (Mar), K (May), N (Jul), U (Sep), Z (Dec)
-    current_month = datetime.now().month
-    current_year = datetime.now().year % 100  # Last 2 digits
-    
-    # Determine likely front 2 contracts
-    month_codes = ['H', 'K', 'N', 'U', 'Z']  # Mar, May, Jul, Sep, Dec
-    month_nums = [3, 5, 7, 9, 12]
-    
-    contracts_to_try = []
-    for i, month_num in enumerate(month_nums):
-        year_offset = 0 if month_num >= current_month else 1
-        symbol = f"KC{month_codes[i]}{current_year + year_offset}"
-        contracts_to_try.append(symbol)
-    
-    # Try to get the first 2 available contracts
     results = []
-    for symbol in contracts_to_try[:3]:  # Try first 3 to ensure we get 2
+    
+    for contract_info in contracts_to_fetch:
+        symbol = contract_info['symbol']
+        print(f"  📊 Fetching {contract_info['name']} ({symbol})...")
+        
+        # Fetch the contract data
         data = get_barchart_contract(symbol)
         if data:
             data['symbol'] = symbol
-            data['contract'] = symbol[-3:]
+            data['contract'] = contract_info['contract']
             results.append(data)
-            if len(results) == 2:
-                break
+            print(f"    ✅ Got {contract_info['name']}: ${data['price']:.2f}")
+        else:
+            print(f"    ❌ Failed to fetch {contract_info['name']}")
     
     return results if len(results) == 2 else None
 
@@ -295,5 +280,7 @@ if __name__ == "__main__":
     # Test Arabica
     arabica_contracts = get_barchart_arabica_last2()
     if arabica_contracts:
-        print(f"✅ Arabica Contract 1 ({arabica_contracts[0]['contract']}): ${arabica_contracts[0]['price']:.2f}")
-        print(f"✅ Arabica Contract 2 ({arabica_contracts[1]['contract']}): ${arabica_contracts[1]['price']:.2f}")
+        print(f"\n✅ Arabica Contract 1 ({arabica_contracts[0]['symbol']}): ${arabica_contracts[0]['price']:.2f}")
+        print(f"✅ Arabica Contract 2 ({arabica_contracts[1]['symbol']}): ${arabica_contracts[1]['price']:.2f}")
+    else:
+        print("\n❌ Could not fetch Arabica contracts")
