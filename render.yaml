@@ -6,7 +6,7 @@ services:
     plan: free
     branch: main
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn monitor:app
+    startCommand: gunicorn monitor:app --timeout 120 --workers 2
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.0
@@ -22,9 +22,5 @@ services:
         sync: false
       - key: EMAIL_TO
         sync: false
-    
-    # Health check endpoint
     healthCheckPath: /
-    
-    # Auto-deploy on push
     autoDeploy: true
