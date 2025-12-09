@@ -47,10 +47,19 @@ GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
 EMAIL_FROM = os.environ.get('EMAIL_FROM')
 EMAIL_PASSWORD = os.environ.get('EMAIL_PASSWORD')
 EMAIL_TO = os.environ.get('EMAIL_TO', EMAIL_FROM)
+# Parse multiple email recipients (comma-separated)
+EMAIL_RECIPIENTS = [email.strip() for email in EMAIL_TO.split(',')]
 
 # Abu Auf Portfolio - Updated
 WATCHLIST = {
     'RC=F': {'name': 'Robusta Coffee', 'type': 'Softs'},
+    'KC=F': {'name': 'Arabica Coffee', 'type': 'Softs'},
+    'SB=F': {'name': 'Sugar No.11', 'type': 'Softs'},
+    'CC=F': {'name': 'Cocoa', 'type': 'Softs'},
+    'ZW=F': {'name': 'Wheat', 'type': 'Grains'},
+    'ZL=F': {'name': 'Soybean Oil', 'type': 'Oils'},
+    'PO=F': {'name': 'Palm Oil', 'type': 'Oils'}
+},
     'KC=F': {'name': 'Arabica Coffee', 'type': 'Softs'},
     'SB=F': {'name': 'Sugar No.11', 'type': 'Softs'},
     'CC=F': {'name': 'Cocoa', 'type': 'Softs'},
@@ -74,8 +83,8 @@ def fetch_commodity_data(symbol):
     - Robusta (RC=F): Try Barchart Jan'26 → Fallback to Investing.com
     - Others: Use Investing.com directly
     """
-    commodity_info = WATCHLIST.get(symbol, {})
-    commodity_name = commodity_info.get('name', symbol)
+    commodity_info = WATCHLIST.get(symbol, {'name': symbol, 'type': 'Unknown'})
+    commodity_name = commodity_info['name']
     
     # SPECIAL CASE: Robusta Coffee - Try Barchart first
     if symbol == 'RC=F':
@@ -707,26 +716,141 @@ def send_hourly_report():
     
     print("✅ Hourly report sent!")
 
+
+def send_email_with_attachment(to_email, subject, html_body, attachment_path, attachment_name):
+    """Send email with PDF attachment"""
+    try:
+        # Create message
+        msg = MIMEMultipart()
+        msg['Subject'] = subject
+        msg['From'] = EMAIL_FROM
+        msg['To'] = to_email
+        
+        # Attach HTML body
+        html_part = MIMEText(html_body, 'html')
+        msg.attach(html_part)
+        
+        # Attach PDF
+        with open(attachment_path, 'rb') as f:
+            pdf_part = MIMEBase('application', 'pdf')
+            pdf_part.set_payload(f.read())
+        
+        encoders.encode_base64(pdf_part)
+        pdf_part.add_header(
+            'Content-Disposition',
+            f'attachment; filename={attachment_name}'
+        )
+        msg.attach(pdf_part)
+        
+        # Send via Gmail SMTP
+        with smtplib.SMTP('smtp.gmail.com', 587) as server:
+            server.starttls()
+            server.login(EMAIL_FROM, EMAIL_PASSWORD)
+            server.send_message(msg)
+        
+        return True
+        
+    except Exception as e:
+        print(f"      Error: {e}")
+        return False
 def send_weekly_report():
-    """Send weekly PDF report (Friday only)"""
+    """Send weekly PDF report (Friday only) via Telegram AND Email"""
     if datetime.now().weekday() != 4:  # 4 = Friday
         return
     
-    print("\n📄 Generating weekly PDF report...")
+    print("
+ðŸ"„ Generating weekly PDF report...")
     
     pdf_path = generate_weekly_pdf_report()
     
-    if pdf_path and TELEGRAM_BOT_TOKEN:
-        caption = f"📊 Abu Auf Commodities - Weekly Report\n{datetime.now().strftime('%Y-%m-%d')}"
-        send_telegram_document(pdf_path, caption)
-        print("✅ Weekly report sent!")
-    else:
-        print("⚠️ Weekly report generation failed")
+    if not pdf_path:
+        print("âš ï¸ Weekly report generation failed")
+        return
+    
+    # Send via Telegram
+    if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
+        caption = f"ðŸ"Š Abu Auf Commodities - Weekly Report
+{datetime.now().strftime('%Y-%m-%d')}"
+        if send_telegram_document(pdf_path, caption):
+            print("âœ… Weekly report sent to Telegram!")
+        else:
+            print("âš ï¸ Failed to send to Telegram")
+    
+    # Send via Email to all recipients
+    if EMAIL_FROM and EMAIL_PASSWORD and EMAIL_RECIPIENTS:
+        print(f"
+ðŸ"§ Sending PDF to {len(EMAIL_RECIPIENTS)} email recipients...")
+        
+        subject = f"ðŸ"Š Abu Auf Commodities - Weekly Report - {datetime.now().strftime('%B %d, %Y')}"
+        
+        html_body = f"""
+        <html>
+            <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+                <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
+                    <h2 style="color: #003366; border-bottom: 3px solid #003366; padding-bottom: 10px;">
+                        ðŸ"Š Abu Auf Commodities Intelligence Report
+                    </h2>
+                    
+                    <p>Dear Team,</p>
+                    
+                    <p>Please find attached the <strong>Weekly Commodities Report</strong> for the week ending <strong>{datetime.now().strftime('%B %d, %Y')}</strong>.</p>
+                    
+                    <div style="background-color: #f5f5f5; padding: 15px; border-radius: 5px; margin: 20px 0;">
+                        <h3 style="margin-top: 0; color: #003366;">ðŸ"‹ Report Contents:</h3>
+                        <ul style="margin-bottom: 0;">
+                            <li>Executive Summary with Market Overview</li>
+                            <li>Weekly Price Performance (All 7 Commodities)</li>
+                            <li>Supply & Demand Analysis by Category</li>
+                            <li>Key Risk Factors & Market Outlook</li>
+                            <li>Strategic Procurement Recommendations</li>
+                        </ul>
+                    </div>
+                    
+                    <div style="background-color: #e8f4f8; padding: 15px; border-radius: 5px; border-left: 4px solid #0066cc;">
+                        <h4 style="margin-top: 0; color: #0066cc;">ðŸ"Š Commodities Tracked:</h4>
+                        <p style="margin-bottom: 5px;"><strong>Softs:</strong> Robusta Coffee, Arabica Coffee, Sugar, Cocoa</p>
+                        <p style="margin-bottom: 5px;"><strong>Grains:</strong> Wheat</p>
+                        <p style="margin-bottom: 0;"><strong>Oils:</strong> Soybean Oil, Palm Oil</p>
+                    </div>
+                    
+                    <p style="margin-top: 20px;">This report is generated automatically every Friday at 5:00 PM Cairo time using real-time market data and AI-powered analysis.</p>
+                    
+                    <hr style="border: none; border-top: 1px solid #ddd; margin: 20px 0;">
+                    
+                    <p style="font-size: 12px; color: #666;">
+                        <strong>Abu Auf Commodities Monitor</strong><br>
+                        Automated Intelligence System<br>
+                        For internal use only
+                    </p>
+                </div>
+            </body>
+        </html>
+        """
+        
+        success_count = 0
+        for recipient in EMAIL_RECIPIENTS:
+            try:
+                if send_email_with_attachment(
+                    to_email=recipient,
+                    subject=subject,
+                    html_body=html_body,
+                    attachment_path=pdf_path,
+                    attachment_name=f"Abu_Auf_Weekly_Report_{datetime.now().strftime('%Y%m%d')}.pdf"
+                ):
+                    print(f"   âœ… Sent to {recipient}")
+                    success_count += 1
+                else:
+                    print(f"   âŒ Failed to send to {recipient}")
+            except Exception as e:
+                print(f"   âŒ Error sending to {recipient}: {e}")
+        
+        print(f"
+ðŸ"§ Email delivery: {success_count}/{len(EMAIL_RECIPIENTS)} successful")
+    
+    print("
+âœ… Weekly report distribution completed!")
 
-# ============ FLASK WEB SERVER ============
-app = Flask(__name__)
 
-@app.route('/')
 def home():
     """Health check endpoint"""
     return jsonify({

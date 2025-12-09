@@ -16,14 +16,14 @@ def fetch_from_investing_com(commodity_name):
         # Map commodity names to Investing.com URLs
         urls = {
             'Robusta Coffee': 'https://www.investing.com/commodities/london-coffee',
-            'Coffee Arabica': 'https://www.investing.com/commodities/us-coffee-c',
+            'Arabica Coffee': 'https://www.investing.com/commodities/us-coffee-c',
+            'Sugar No.11': 'https://www.investing.com/commodities/us-sugar-no11',
             'Cocoa': 'https://www.investing.com/commodities/us-cocoa',
-            'Sugar': 'https://www.investing.com/commodities/us-sugar-no11',
-            'Cotton': 'https://www.investing.com/commodities/us-cotton-no.2',
             'Wheat': 'https://www.investing.com/commodities/us-wheat',
             'Soybean Oil': 'https://www.investing.com/commodities/us-soybean-oil',
             'Palm Oil': 'https://www.investing.com/commodities/palm-oil',
-            'Gold': 'https://www.investing.com/commodities/gold'
+            'Coffee Arabica': 'https://www.investing.com/commodities/us-coffee-c',
+            'Sugar': 'https://www.investing.com/commodities/us-sugar-no11'
         }
         
         url = urls.get(commodity_name)
