@@ -87,7 +87,7 @@ arabica_contracts = []  # List of 2 contract dicts
 def is_market_hours():
     """
     Check if current time is within trading hours
-    Monday-Friday 01:00-23:00 Cairo Time (covers most of ICE/CBOT hours)
+    Monday-Friday 09:00-21:00 Cairo Time (Full Coffee Trading Coverage)
     """
     cairo_tz = pytz.timezone('Africa/Cairo')
     now_cairo = datetime.now(cairo_tz)
@@ -96,10 +96,10 @@ def is_market_hours():
     if now_cairo.weekday() >= 5:  # Saturday=5, Sunday=6
         return False
     
-    # Market hours: 01:00 to 23:00 Cairo time
+    # Market hours: 09:00 to 21:00 Cairo time
     current_time = now_cairo.time()
-    market_open = dt_time(1, 0)   # 1:00 AM
-    market_close = dt_time(23, 0)  # 11:00 PM
+    market_open = dt_time(9, 0)   # 9:00 AM
+    market_close = dt_time(21, 0)  # 9:00 PM
     
     return market_open <= current_time <= market_close
 
@@ -1284,14 +1284,14 @@ def start_scheduler():
     # Monitor every 10 minutes (1 AM - 11 PM Cairo time, market hours)
     scheduler.add_job(
         func=monitor_commodities,
-        trigger=CronTrigger(minute='*/10', hour='1-23'),
+        trigger=CronTrigger(minute='*/10', hour='9-21'),
         id='monitor_commodities',
         name='Monitor commodities every 10 minutes (market hours enforced)'
     )
     # Hourly report (1 AM - 11 PM, on the hour)
     scheduler.add_job(
         func=send_hourly_report,
-        trigger=CronTrigger(minute='0', hour='1-23'),
+        trigger=CronTrigger(minute='0', hour='9-21'),
         id='hourly_report',
         name='Send hourly summary report (market hours)'
     )
@@ -1304,8 +1304,8 @@ def start_scheduler():
     )
     scheduler.start()
     print("✅ Scheduler started!")
-    print("   📊 Monitoring: Every 10 minutes (1 AM - 11 PM Cairo, market hours only)")
-    print("   📈 Hourly Reports: On the hour (1 AM - 11 PM, market hours only)")
+    print("   📊 Monitoring: Every 10 minutes (9 AM - 9 PM Cairo, market hours only)")
+    print("   📈 Hourly Reports: On the hour (9 AM - 9 PM, market hours only)")
     print("   📄 Weekly Report: Friday at 5 PM")
     # Run initial monitoring
     Thread(target=monitor_commodities).start()
@@ -1318,7 +1318,7 @@ if __name__ == '__main__':
     print(f"📱 Telegram: {'Enabled' if TELEGRAM_BOT_TOKEN else 'Disabled'}")
     print(f"🧠 AI Analysis: {'Enabled' if GEMINI_API_KEY else 'Disabled'}")
     print(f"📧 Email: {'Enabled' if EMAIL_FROM and EMAIL_PASSWORD else 'Disabled'}")
-    print(f"⏰ Market Hours: Monday-Friday, 1:00 AM - 11:00 PM Cairo Time")
+    print(f"⏰ Market Hours: Monday-Friday, 9:00 AM - 9:00 PM Cairo Time")
     print("\n" + "="*60 + "\n")
     start_scheduler()
     port = int(os.environ.get('PORT', 10000))
