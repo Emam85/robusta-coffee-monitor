@@ -85,6 +85,7 @@ arabica_contracts = []  # List of 2 contract dicts
 
 # ============ MARKET HOURS DETECTION ============
 def is_market_hours():
+    return True  # TESTING MODE
     """
     Check if current time is within trading hours
     Monday-Friday 09:00-21:00 Cairo Time (Full Coffee Trading Coverage)
