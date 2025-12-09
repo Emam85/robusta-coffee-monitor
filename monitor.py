@@ -1,3 +1,5 @@
+# -*- coding: utf-8 -*-
+"""
 Abu Auf Commodities Monitor - Enhanced Version
 Features:
 - 🌊 Intelligent Waterfall Scraper (Barchart → Investing.com)
