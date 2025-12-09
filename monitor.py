@@ -238,7 +238,7 @@ def fetch_arabica_contracts():
     if not HAS_BARCHART:
         return None
     
-    print("\n🌊 Fetching Arabica Coffee (Last 2 Contracts)")
+    print("\n🌊 Fetching Arabica Coffee 4/5 (Last 2 Contracts)")
     print("=" * 60)
     
     contracts_data = get_barchart_arabica_last2()
@@ -272,7 +272,7 @@ def fetch_arabica_contracts():
                 'high': high,
                 'low': low,
                 'timestamp': datetime.now().isoformat(),
-                'name': f"Arabica Coffee",
+                'name': f"Arabica Coffee 4/5",
                 'type': 'Softs',
                 'source': 'Barchart',
                 'exchange': 'ICE Futures (via Barchart)'
@@ -531,7 +531,7 @@ def monitor_commodities():
             traceback.print_exc()
             continue
     
-    # Process Arabica Coffee (2 contracts)
+    # Process Arabica Coffee 4/5 (2 contracts)
     try:
         arabica_data = fetch_arabica_contracts()
         if arabica_data:
@@ -665,7 +665,7 @@ def generate_daily_summary():
                 sign = ""
             
             summary_lines.append(
-                f"{emoji} *Arabica Coffee ({contract['contract']})* (Softs)\n"
+                f"{emoji} *Arabica Coffee 4/5 ({contract['contract']})* (Softs)\n"
                 f"   Current: ${current_price:.2f} | "
                 f"Change: {sign}${price_change:.2f} ({sign}{percent_change:.2f}%)\n"
             )
@@ -792,7 +792,7 @@ def generate_weekly_pdf_report():
         # Add Arabica to Softs category
         if arabica_contracts and 'Softs' in categories:
             for contract in arabica_contracts:
-                categories['Softs'].append((f"KC_{contract['contract']}", {'name': f"Arabica Coffee ({contract['contract']})", 'type': 'Softs'}))
+                categories['Softs'].append((f"KC_{contract['contract']}", {'name': f"Arabica Coffee 4/5 ({contract['contract']})", 'type': 'Softs'}))
         
         for category, commodities in categories.items():
             pdf.set_font('Arial', 'B', 14)
@@ -1137,7 +1137,7 @@ def send_weekly_report():
                     </div>
                     <div style="background-color: #e8f4f8; padding: 15px; border-radius: 5px; border-left: 4px solid #0066cc;">
                         <h4 style="margin-top: 0; color: #0066cc;">📊 Commodities Tracked:</h4>
-                        <p style="margin-bottom: 5px;"><strong>Softs:</strong> Robusta Coffee, Arabica Coffee (2 contracts), Sugar, Cocoa</p>
+                        <p style="margin-bottom: 5px;"><strong>Softs:</strong> Robusta Coffee, Arabica Coffee 4/5 (2 contracts), Sugar, Cocoa</p>
                         <p style="margin-bottom: 5px;"><strong>Grains:</strong> Wheat</p>
                         <p style="margin-bottom: 0;"><strong>Oils:</strong> Soybean Oil, Palm Oil</p>
                     </div>
@@ -1242,7 +1242,7 @@ def get_prices():
             baseline_key = f"KC_CONTRACT_{i+1}"
             baseline = daily_start_prices.get(baseline_key, contract['price'])
             prices[symbol_key] = {
-                'name': f"Arabica Coffee ({contract['contract']})",
+                'name': f"Arabica Coffee 4/5 ({contract['contract']})",
                 'type': 'Softs',
                 'current': contract['price'],
                 'baseline': baseline,
