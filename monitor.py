@@ -1,10 +1,11 @@
 """
-Robusta Coffee Monitor - Waterfall Edition
+Abu Auf Commodities Monitor - Enhanced Version
 Features:
 - 🌊 Intelligent Waterfall Scraper (Barchart → Investing.com)
 - 🧠 Gemini AI Analysis
+- 📊 Hourly Charts & Summaries
+- 📄 Weekly PDF Reports
 - 📱 Telegram Notifications
-- 📧 Email Reports
 - ⏰ Scheduled monitoring every 10 minutes
 """
 import os
@@ -15,8 +16,16 @@ import google.generativeai as genai
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from email.mime.base import MIMEBase
+from email import encoders
 from threading import Thread
 from flask import Flask, jsonify
+import matplotlib
+matplotlib.use('Agg')  # Non-interactive backend
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
+from io import BytesIO
+import base64
 
 # Import intelligent scrapers
 try:
@@ -38,27 +47,24 @@ EMAIL_FROM = os.environ.get('EMAIL_FROM')
 EMAIL_PASSWORD = os.environ.get('EMAIL_PASSWORD')
 EMAIL_TO = os.environ.get('EMAIL_TO', EMAIL_FROM)
 
-# Working hours (Cairo timezone)
-WORK_START_HOUR = 6
-WORK_END_HOUR = 18
-
-# Watchlist symbols
+# Abu Auf Portfolio - Updated
 WATCHLIST = {
-    'RC=F': 'Robusta Coffee (ICE)',
-    'KC=F': 'Coffee Arabica (ICE)',
-    'CC=F': 'Cocoa (ICE)',
-    'SB=F': 'Sugar (ICE)',
-    'CT=F': 'Cotton (ICE)',
-    'ZW=F': 'Wheat (CBOT)',
-    'GC=F': 'Gold (COMEX)',
+    'RC=F': {'name': 'Robusta Coffee', 'type': 'Softs'},
+    'KC=F': {'name': 'Arabica Coffee', 'type': 'Softs'},
+    'SB=F': {'name': 'Sugar No.11', 'type': 'Softs'},
+    'CC=F': {'name': 'Cocoa', 'type': 'Softs'},
+    'ZW=F': {'name': 'Wheat', 'type': 'Grains'},
+    'ZL=F': {'name': 'Soybean Oil', 'type': 'Oils'},
+    'PO=F': {'name': 'Palm Oil', 'type': 'Oils'}
 }
 
 # Configure Gemini
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
 
-# Price history storage (in-memory)
-price_history = {}
+# Price history storage (in-memory with timestamps)
+price_history = {}  # {symbol: [(timestamp, price), ...]}
+daily_start_prices = {}  # Store 9 AM baseline prices
 
 # ============ DATA FETCHER WITH WATERFALL LOGIC ============
 def fetch_commodity_data(symbol):
@@ -67,6 +73,8 @@ def fetch_commodity_data(symbol):
     - Robusta (RC=F): Try Barchart Jan'26 → Fallback to Investing.com
     - Others: Use Investing.com directly
     """
+    commodity_info = WATCHLIST.get(symbol, {})
+    commodity_name = commodity_info.get('name', symbol)
     
     # SPECIAL CASE: Robusta Coffee - Try Barchart first
     if symbol == 'RC=F':
@@ -89,37 +97,31 @@ def fetch_commodity_data(symbol):
                     'high': barchart_data.get('high', barchart_data['price']),
                     'low': barchart_data.get('low', barchart_data['price']),
                     'volume': barchart_data.get('volume', 0),
-                    'open': barchart_data['price'],
-                    'prev_close': barchart_data['price'] - barchart_data.get('change', 0),
                     'timestamp': datetime.now().isoformat(),
-                    'name': 'Robusta Coffee Jan 26 (Barchart)',
-                    'history': [barchart_data['price']] * 20,
+                    'name': commodity_name,
+                    'type': commodity_info.get('type', 'Unknown'),
                     'source': barchart_data['source']
                 }
         
-        # Layer 2: Fallback to Investing.com
         print("⚠️ Barchart unavailable, using Investing.com fallback...")
         print("=" * 60 + "\n")
     
     # STANDARD CASE: All other commodities (and Robusta fallback)
     try:
-        data = fetch_from_investing(symbol, WATCHLIST.get(symbol, symbol))
+        data = fetch_from_investing(symbol, commodity_name)
         
         if data:
-            # Standardize format
             return {
-                'symbol': data.get('symbol', symbol),
+                'symbol': symbol,
                 'price': data.get('price', 0),
                 'change': data.get('change', 0),
                 'change_percent': data.get('percent', 0),
                 'high': data.get('high', data.get('price', 0)),
                 'low': data.get('low', data.get('price', 0)),
                 'volume': data.get('volume', 0),
-                'open': data.get('price', 0),
-                'prev_close': data.get('price', 0) - data.get('change', 0),
                 'timestamp': datetime.now().isoformat(),
-                'name': WATCHLIST.get(symbol, symbol),
-                'history': [data.get('price', 0)] * 20,
+                'name': commodity_name,
+                'type': commodity_info.get('type', 'Unknown'),
                 'source': data.get('source', 'Unknown')
             }
     except Exception as e:
@@ -127,76 +129,475 @@ def fetch_commodity_data(symbol):
     
     return None
 
-# ============ AI ANALYSIS ============
-def generate_price_targets(symbol, price_data, history):
-    """Use Gemini AI to generate price targets and predictions"""
+# ============ CHART GENERATION ============
+def generate_price_chart(symbol, commodity_name):
+    """Generate a line chart for a commodity's daily movement"""
+    if symbol not in price_history or len(price_history[symbol]) < 2:
+        return None
+    
+    try:
+        # Extract timestamps and prices
+        timestamps = [datetime.fromisoformat(ts) for ts, _ in price_history[symbol]]
+        prices = [price for _, price in price_history[symbol]]
+        
+        # Create figure
+        plt.figure(figsize=(12, 6))
+        plt.style.use('seaborn-v0_8-darkgrid')
+        
+        # Plot line
+        plt.plot(timestamps, prices, linewidth=2, color='#2E86AB', marker='o', markersize=4)
+        
+        # Fill area under curve
+        plt.fill_between(timestamps, prices, alpha=0.3, color='#2E86AB')
+        
+        # Formatting
+        plt.title(f'{commodity_name} - Daily Movement', fontsize=16, fontweight='bold', pad=20)
+        plt.xlabel('Time', fontsize=12, fontweight='bold')
+        plt.ylabel('Price (USD)', fontsize=12, fontweight='bold')
+        
+        # Format x-axis to show times nicely
+        plt.gca().xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
+        plt.gca().xaxis.set_major_locator(mdates.HourLocator(interval=1))
+        plt.gcf().autofmt_xdate()
+        
+        # Add current price annotation
+        last_price = prices[-1]
+        plt.annotate(f'${last_price:.2f}', 
+                    xy=(timestamps[-1], last_price),
+                    xytext=(10, 10), textcoords='offset points',
+                    bbox=dict(boxstyle='round,pad=0.5', facecolor='yellow', alpha=0.7),
+                    fontsize=10, fontweight='bold')
+        
+        # Grid
+        plt.grid(True, alpha=0.3)
+        plt.tight_layout()
+        
+        # Save to BytesIO
+        buf = BytesIO()
+        plt.savefig(buf, format='png', dpi=150, bbox_inches='tight')
+        buf.seek(0)
+        plt.close()
+        
+        return buf
+    except Exception as e:
+        print(f"❌ Chart generation error for {symbol}: {e}")
+        return None
+
+# ============ DAILY SUMMARY GENERATOR ============
+def generate_daily_summary():
+    """Generate text summary comparing current prices to 9 AM baseline"""
+    summary_lines = ["📊 *Abu Auf Commodities - Daily Movement Summary*\n"]
+    summary_lines.append(f"📅 Date: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n")
+    summary_lines.append("─" * 50 + "\n")
+    
+    for symbol, info in WATCHLIST.items():
+        commodity_name = info['name']
+        commodity_type = info['type']
+        
+        if symbol not in price_history or len(price_history[symbol]) == 0:
+            continue
+        
+        # Get current price
+        current_price = price_history[symbol][-1][1]
+        
+        # Get baseline (9 AM price or first price of the day)
+        baseline_price = daily_start_prices.get(symbol, price_history[symbol][0][1])
+        
+        # Calculate movement
+        price_change = current_price - baseline_price
+        percent_change = (price_change / baseline_price) * 100 if baseline_price else 0
+        
+        # Format with emoji
+        if percent_change > 0:
+            emoji = "📈"
+            sign = "+"
+        elif percent_change < 0:
+            emoji = "📉"
+            sign = ""
+        else:
+            emoji = "➡️"
+            sign = ""
+        
+        summary_lines.append(
+            f"{emoji} *{commodity_name}* ({commodity_type})\n"
+            f"   Current: ${current_price:.2f} | "
+            f"Change: {sign}${price_change:.2f} ({sign}{percent_change:.2f}%)\n\n"
+        )
+    
+    return "".join(summary_lines)
+
+# ============ WEEKLY PDF REPORT ============
+def generate_weekly_pdf_report():
+    """Generate professional commodity analysis report matching industry standards"""
+    try:
+        from fpdf import FPDF
+        
+        class CommodityReport(FPDF):
+            def header(self):
+                # Abu Auf logo area (placeholder)
+                self.set_font('Arial', 'B', 20)
+                self.set_text_color(0, 51, 102)  # Dark blue
+                self.cell(0, 15, 'ABU AUF', 0, 1, 'L')
+                self.set_font('Arial', '', 10)
+                self.set_text_color(100, 100, 100)
+                self.cell(0, 5, 'Commodities Intelligence Report', 0, 1, 'L')
+                self.ln(5)
+            
+            def footer(self):
+                self.set_y(-15)
+                self.set_font('Arial', 'I', 8)
+                self.set_text_color(128, 128, 128)
+                self.cell(0, 10, f'Page {self.page_no()}', 0, 0, 'C')
+        
+        pdf = CommodityReport()
+        pdf.add_page()
+        
+        # ============ COVER SECTION ============
+        pdf.set_font('Arial', 'B', 24)
+        pdf.set_text_color(0, 51, 102)
+        pdf.ln(20)
+        pdf.cell(0, 15, 'Weekly Commodities Report', 0, 1, 'C')
+        
+        pdf.set_font('Arial', '', 14)
+        pdf.set_text_color(0, 0, 0)
+        pdf.cell(0, 10, f'Week Ending: {datetime.now().strftime("%B %d, %Y")}', 0, 1, 'C')
+        pdf.ln(30)
+        
+        # Key Highlights Box
+        pdf.set_fill_color(240, 240, 240)
+        pdf.set_font('Arial', 'B', 12)
+        pdf.cell(0, 10, 'WEEKLY HIGHLIGHTS', 0, 1, 'C', fill=True)
+        pdf.set_font('Arial', '', 10)
+        
+        # Calculate key metrics
+        total_commodities = len([s for s in WATCHLIST.keys() if s in price_history])
+        positive_movers = 0
+        negative_movers = 0
+        
+        for symbol in WATCHLIST.keys():
+            if symbol in price_history and len(price_history[symbol]) > 1:
+                prices = [p for _, p in price_history[symbol]]
+                if prices[-1] > prices[0]:
+                    positive_movers += 1
+                elif prices[-1] < prices[0]:
+                    negative_movers += 1
+        
+        pdf.ln(5)
+        pdf.cell(0, 8, f'Commodities Tracked: {total_commodities}', 0, 1, 'C')
+        pdf.cell(0, 8, f'Positive Movement: {positive_movers} | Negative Movement: {negative_movers}', 0, 1, 'C')
+        
+        # ============ PAGE 2: EXECUTIVE SUMMARY ============
+        pdf.add_page()
+        pdf.set_font('Arial', 'B', 16)
+        pdf.set_text_color(0, 51, 102)
+        pdf.cell(0, 10, 'EXECUTIVE SUMMARY', 0, 1, 'L')
+        pdf.line(10, pdf.get_y(), 200, pdf.get_y())
+        pdf.ln(5)
+        
+        pdf.set_font('Arial', '', 10)
+        pdf.set_text_color(0, 0, 0)
+        
+        if GEMINI_API_KEY:
+            summary = generate_executive_summary()
+            pdf.multi_cell(0, 6, summary)
+        else:
+            pdf.multi_cell(0, 6, 'AI-powered market analysis is currently unavailable. Please review individual commodity performance data in subsequent sections.')
+        
+        # ============ SUPPLY & DEMAND UPDATE ============
+        pdf.add_page()
+        pdf.set_font('Arial', 'B', 16)
+        pdf.set_text_color(0, 51, 102)
+        pdf.cell(0, 10, 'SUPPLY & DEMAND UPDATE', 0, 1, 'L')
+        pdf.line(10, pdf.get_y(), 200, pdf.get_y())
+        pdf.ln(5)
+        
+        # Generate market intelligence for each category
+        categories = {}
+        for symbol, info in WATCHLIST.items():
+            cat = info['type']
+            if cat not in categories:
+                categories[cat] = []
+            categories[cat].append((symbol, info))
+        
+        for category, commodities in categories.items():
+            pdf.set_font('Arial', 'B', 14)
+            pdf.set_text_color(0, 102, 204)
+            pdf.cell(0, 10, f'{category.upper()} COMPLEX', 0, 1, 'L')
+            pdf.ln(2)
+            
+            for symbol, info in commodities:
+                if symbol not in price_history or len(price_history[symbol]) < 2:
+                    continue
+                
+                # Get AI analysis for this commodity
+                commodity_analysis = generate_commodity_deep_analysis(symbol, info)
+                
+                pdf.set_font('Arial', 'B', 12)
+                pdf.set_text_color(0, 0, 0)
+                pdf.cell(0, 8, f'{info["name"]}', 0, 1, 'L')
+                
+                pdf.set_font('Arial', '', 9)
+                pdf.multi_cell(0, 5, commodity_analysis)
+                pdf.ln(3)
+            
+            pdf.ln(3)
+        
+        # ============ PRICE PERFORMANCE TABLES ============
+        pdf.add_page()
+        pdf.set_font('Arial', 'B', 16)
+        pdf.set_text_color(0, 51, 102)
+        pdf.cell(0, 10, 'WEEKLY PRICE PERFORMANCE', 0, 1, 'L')
+        pdf.line(10, pdf.get_y(), 200, pdf.get_y())
+        pdf.ln(8)
+        
+        # Table header
+        pdf.set_fill_color(0, 51, 102)
+        pdf.set_text_color(255, 255, 255)
+        pdf.set_font('Arial', 'B', 9)
+        
+        col_widths = [50, 30, 30, 30, 30, 20]
+        headers = ['Commodity', 'Open', 'Close', 'High/Low', 'Change', '%']
+        
+        for i, header in enumerate(headers):
+            pdf.cell(col_widths[i], 8, header, 1, 0, 'C', fill=True)
+        pdf.ln()
+        
+        # Table data
+        pdf.set_font('Arial', '', 9)
+        pdf.set_text_color(0, 0, 0)
+        
+        for symbol, info in WATCHLIST.items():
+            if symbol not in price_history or len(price_history[symbol]) < 2:
+                continue
+            
+            prices = [p for _, p in price_history[symbol]]
+            week_start = prices[0]
+            week_end = prices[-1]
+            week_high = max(prices)
+            week_low = min(prices)
+            week_change = week_end - week_start
+            week_change_pct = (week_change / week_start * 100) if week_start else 0
+            
+            # Alternate row colors
+            if list(WATCHLIST.keys()).index(symbol) % 2 == 0:
+                pdf.set_fill_color(245, 245, 245)
+            else:
+                pdf.set_fill_color(255, 255, 255)
+            
+            # Color code the change
+            if week_change_pct > 0:
+                pdf.set_text_color(0, 128, 0)  # Green
+            elif week_change_pct < 0:
+                pdf.set_text_color(255, 0, 0)  # Red
+            else:
+                pdf.set_text_color(0, 0, 0)  # Black
+            
+            pdf.cell(col_widths[0], 8, info['name'], 1, 0, 'L', fill=True)
+            pdf.set_text_color(0, 0, 0)
+            pdf.cell(col_widths[1], 8, f'${week_start:.2f}', 1, 0, 'C', fill=True)
+            pdf.cell(col_widths[2], 8, f'${week_end:.2f}', 1, 0, 'C', fill=True)
+            pdf.cell(col_widths[3], 8, f'${week_high:.2f}/${week_low:.2f}', 1, 0, 'C', fill=True)
+            
+            # Change with color
+            if week_change_pct > 0:
+                pdf.set_text_color(0, 128, 0)
+            elif week_change_pct < 0:
+                pdf.set_text_color(255, 0, 0)
+            
+            pdf.cell(col_widths[4], 8, f'{week_change:+.2f}', 1, 0, 'C', fill=True)
+            pdf.cell(col_widths[5], 8, f'{week_change_pct:+.1f}%', 1, 0, 'C', fill=True)
+            pdf.set_text_color(0, 0, 0)
+            pdf.ln()
+        
+        # ============ KEY RISK FACTORS ============
+        pdf.add_page()
+        pdf.set_font('Arial', 'B', 16)
+        pdf.set_text_color(0, 51, 102)
+        pdf.cell(0, 10, 'KEY RISK FACTORS & OUTLOOK', 0, 1, 'L')
+        pdf.line(10, pdf.get_y(), 200, pdf.get_y())
+        pdf.ln(5)
+        
+        pdf.set_font('Arial', '', 10)
+        pdf.set_text_color(0, 0, 0)
+        
+        if GEMINI_API_KEY:
+            risk_analysis = generate_risk_analysis()
+            pdf.multi_cell(0, 6, risk_analysis)
+        
+        # ============ PROCUREMENT RECOMMENDATIONS ============
+        pdf.ln(10)
+        pdf.set_font('Arial', 'B', 14)
+        pdf.set_text_color(204, 0, 0)
+        pdf.cell(0, 10, 'STRATEGIC RECOMMENDATIONS', 0, 1, 'L')
+        pdf.ln(3)
+        
+        pdf.set_font('Arial', '', 10)
+        pdf.set_text_color(0, 0, 0)
+        
+        if GEMINI_API_KEY:
+            recommendations = generate_procurement_recommendations()
+            pdf.multi_cell(0, 6, recommendations)
+        
+        # ============ FOOTER NOTE ============
+        pdf.ln(15)
+        pdf.set_font('Arial', 'I', 8)
+        pdf.set_text_color(128, 128, 128)
+        pdf.multi_cell(0, 4, 'This report is generated using real-time market data and AI-powered analysis. Data sources include ICE Futures, Barchart, and Investing.com. For internal use only.')
+        
+        # Save PDF
+        pdf_path = f'/tmp/abu_auf_weekly_{datetime.now().strftime("%Y%m%d")}.pdf'
+        pdf.output(pdf_path)
+        
+        return pdf_path
+    
+    except Exception as e:
+        print(f"❌ PDF generation error: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+def generate_executive_summary():
+    """Use Gemini AI to generate executive summary in commodity analyst style"""
     try:
         model = genai.GenerativeModel('gemini-2.0-flash-exp')
         
-        recent_prices = [round(p, 2) for p in history[-10:]] if history else [price_data['price']]
-        high_52w = max(history) if history else price_data['high']
-        low_52w = min(history) if history else price_data['low']
+        # Compile comprehensive data
+        commodities_data = []
+        for symbol, info in WATCHLIST.items():
+            if symbol in price_history and len(price_history[symbol]) > 1:
+                prices = [p for _, p in price_history[symbol]]
+                commodities_data.append({
+                    'name': info['name'],
+                    'type': info['type'],
+                    'start': prices[0],
+                    'end': prices[-1],
+                    'high': max(prices),
+                    'low': min(prices),
+                    'change_pct': ((prices[-1] - prices[0]) / prices[0] * 100) if prices[0] else 0,
+                    'volatility': (max(prices) - min(prices)) / prices[0] * 100 if prices[0] else 0
+                })
         
-        prompt = f"""As a commodity technical analyst, analyze {price_data['name']} and provide price targets.
+        prompt = f"""You are a senior commodities analyst at Expana/Bloomberg writing the executive summary for Abu Auf company's board of directors.
 
-Current Data:
-- Price: ${price_data['price']}
-- Change: {price_data['change']:+.2f} ({price_data['change_percent']:+.2f}%)
-- High: ${price_data['high']} | Low: ${price_data['low']}
-- 52W High: ${high_52w:.2f} | 52W Low: ${low_52w:.2f}
-- Recent prices: {recent_prices}
-- Data source: {price_data.get('source', 'Market')}
+Week's Data:
+{json.dumps(commodities_data, indent=2)}
 
-Provide EXACTLY in this JSON format (no extra text):
-{{
-  "trend": "UPTREND/DOWNTREND/SIDEWAYS",
-  "strength": "STRONG/MODERATE/WEAK",
-  "targets": [
-    {{"period": "1 week", "price": {price_data['price'] * 1.02}, "probability": "high"}},
-    {{"period": "2 weeks", "price": {price_data['price'] * 1.04}, "probability": "medium"}},
-    {{"period": "1 month", "price": {price_data['price'] * 1.06}, "probability": "medium"}}
-  ],
-  "recommendation": "BUY/HOLD/SELL",
-  "risk_level": "LOW/MEDIUM/HIGH",
-  "key_insight": "One sentence insight about market conditions",
-  "support": {price_data['low']},
-  "resistance": {price_data['high']}
-}}"""
+Write a professional 3-4 paragraph executive summary covering:
+
+1. MARKET OVERVIEW: Brief global commodity market conditions this week
+2. KEY MOVEMENTS: Highlight significant price changes and their drivers (weather, supply chains, currency, demand)
+3. CATEGORY INSIGHTS: Discuss Softs (coffee/sugar/cocoa), Grains (wheat), and Oils (soybean/palm) separately
+4. FORWARD OUTLOOK: What to expect in the coming week/month
+
+Write in a professional, analytical tone similar to Expana reports. Use phrases like "upward pressure," "supply tightness," "demand fundamentals," "origin differentials." 
+
+Focus on ACTIONABLE insights, not just numbers. Keep it concise and board-ready."""
         
         response = model.generate_content(prompt)
-        text = response.text.strip()
-        
-        # Extract JSON from response
-        if '```json' in text:
-            text = text.split('```json')[1].split('```')[0]
-        elif '```' in text:
-            text = text.split('```')[1].split('```')[0]
-        
-        analysis = json.loads(text)
-        return analysis
+        return response.text
         
     except Exception as e:
-        print(f"⚠️ Gemini analysis error: {e}")
-        return {
-            'trend': 'UNKNOWN',
-            'strength': 'MODERATE',
-            'targets': [],
-            'recommendation': 'HOLD',
-            'risk_level': 'MEDIUM',
-            'key_insight': 'AI analysis temporarily unavailable',
-            'support': price_data['low'],
-            'resistance': price_data['high']
-        }
+        print(f"⚠️ Gemini summary error: {e}")
+        return "Global commodity markets showed mixed performance this week. Key agricultural commodities tracked in the Abu Auf portfolio demonstrated varied movement patterns driven by supply-demand dynamics, weather conditions, and currency fluctuations. Detailed analysis follows in subsequent sections."
+
+def generate_commodity_deep_analysis(symbol, info):
+    """Generate detailed supply/demand analysis for specific commodity"""
+    try:
+        if symbol not in price_history or len(price_history[symbol]) < 2:
+            return "Insufficient data for analysis."
+        
+        model = genai.GenerativeModel('gemini-2.0-flash-exp')
+        
+        prices = [p for _, p in price_history[symbol]]
+        week_start = prices[0]
+        week_end = prices[-1]
+        week_change_pct = ((week_end - week_start) / week_start * 100) if week_start else 0
+        
+        prompt = f"""As a commodity analyst, write a 2-3 sentence supply/demand update for {info['name']}.
+
+Price moved {week_change_pct:+.2f}% this week (from ${week_start:.2f} to ${week_end:.2f}).
+
+Cover ONE OR TWO of these relevant factors:
+- Weather impacts on production regions
+- Export/import dynamics
+- Inventory levels and stock changes
+- Currency effects (USD strength/weakness)
+- Origin-specific developments (Brazil for coffee, India for sugar, etc.)
+- Demand trends from major buyers
+
+Write in professional commodity analyst style. Be specific and actionable. NO generic statements."""
+        
+        response = model.generate_content(prompt)
+        return response.text.strip()
+        
+    except Exception as e:
+        prices = [p for _, p in price_history[symbol]]
+        change = ((prices[-1] - prices[0]) / prices[0] * 100) if prices else 0
+        return f"Price movement of {change:+.2f}% this week reflects ongoing market dynamics. Further monitoring recommended."
+
+def generate_risk_analysis():
+    """Generate risk factors and outlook"""
+    try:
+        model = genai.GenerativeModel('gemini-2.0-flash-exp')
+        
+        prompt = """Write a 3-paragraph risk analysis for Abu Auf's commodity portfolio covering:
+
+1. MACROECONOMIC RISKS: Currency volatility, inflation, interest rates, geopolitical tensions affecting trade
+2. SUPPLY RISKS: Weather patterns (El Niño/La Niña), crop diseases, logistics disruptions, origin-specific issues
+3. DEMAND RISKS: Consumer trends, emerging markets demand, substitution effects
+
+Keep it board-level: strategic, not overly technical. Focus on MATERIAL risks that could impact procurement costs by >5%."""
+        
+        response = model.generate_content(prompt)
+        return response.text
+        
+    except:
+        return "Market volatility remains elevated across agricultural commodities. Key risk factors include weather uncertainty in major producing regions, currency fluctuations affecting import costs, and evolving global demand patterns. Continued monitoring of supply chain dynamics recommended."
+
+def generate_procurement_recommendations():
+    """Generate strategic procurement recommendations"""
+    try:
+        model = genai.GenerativeModel('gemini-2.0-flash-exp')
+        
+        # Get all current prices and trends
+        commodities_summary = []
+        for symbol, info in WATCHLIST.items():
+            if symbol in price_history and len(price_history[symbol]) > 1:
+                prices = [p for _, p in price_history[symbol]]
+                trend = "RISING" if prices[-1] > prices[0] else "FALLING"
+                volatility = "HIGH" if (max(prices) - min(prices)) / prices[0] > 0.05 else "MODERATE"
+                
+                commodities_summary.append(f"{info['name']}: {trend}, {volatility} volatility")
+        
+        prompt = f"""As procurement strategist for Abu Auf, provide 3-4 actionable recommendations based on this week's movements:
+
+{chr(10).join(commodities_summary)}
+
+Structure as:
+• IMMEDIATE ACTIONS (this week): Which commodities to buy/hedge now
+• SHORT-TERM TACTICS (2-4 weeks): Timing and volume strategies
+• RISK MITIGATION: Hedging or diversification suggestions
+
+Be specific: "Lock in 30% of Q1 coffee needs" not "consider hedging." Focus on VALUE PROTECTION."""
+        
+        response = model.generate_content(prompt)
+        return response.text
+        
+    except:
+        return """• Monitor volatile commodities closely for favorable entry points
+• Consider forward contracts for key ingredients showing upward trends
+• Diversify supplier base to mitigate single-origin risk
+• Review hedging strategies for commodities with high volatility"""
 
 # ============ TELEGRAM NOTIFICATIONS ============
-def send_telegram_notification(message):
-    """Send notification via Telegram"""
+def send_telegram_message(message, parse_mode='Markdown'):
+    """Send text message via Telegram"""
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
         payload = {
             'chat_id': TELEGRAM_CHAT_ID,
             'text': message,
-            'parse_mode': 'HTML',
+            'parse_mode': parse_mode,
             'disable_web_page_preview': True
         }
         response = requests.post(url, json=payload, timeout=10)
@@ -206,120 +607,110 @@ def send_telegram_notification(message):
         print(f"❌ Telegram error: {e}")
         return False
 
-# ============ EMAIL NOTIFICATIONS ============
-def send_email_notification(subject, html_content):
-    """Send notification via Email"""
+def send_telegram_photo(photo_buffer, caption=''):
+    """Send photo via Telegram"""
     try:
-        msg = MIMEMultipart('alternative')
-        msg['Subject'] = subject
-        msg['From'] = EMAIL_FROM
-        msg['To'] = EMAIL_TO
-        
-        html_part = MIMEText(html_content, 'html')
-        msg.attach(html_part)
-        
-        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
-            server.login(EMAIL_FROM, EMAIL_PASSWORD)
-            server.send_message(msg)
-        
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
+        files = {'photo': ('chart.png', photo_buffer, 'image/png')}
+        data = {
+            'chat_id': TELEGRAM_CHAT_ID,
+            'caption': caption,
+            'parse_mode': 'Markdown'
+        }
+        response = requests.post(url, files=files, data=data, timeout=30)
+        response.raise_for_status()
         return True
     except Exception as e:
-        print(f"❌ Email error: {e}")
+        print(f"❌ Telegram photo error: {e}")
         return False
 
-# ============ FORMATTING ============
-def format_telegram_message(price_data, analysis):
-    """Format message for Telegram"""
-    
-    # Determine emoji based on change
-    if price_data['change_percent'] > 1:
-        emoji = "🔥📈"
-        alert = "STRONG INCREASE"
-    elif price_data['change_percent'] > 0:
-        emoji = "📈"
-        alert = "Price Up"
-    elif price_data['change_percent'] < -1:
-        emoji = "📉❄️"
-        alert = "STRONG DECREASE"
-    elif price_data['change_percent'] < 0:
-        emoji = "📉"
-        alert = "Price Down"
-    else:
-        emoji = "➡️"
-        alert = "No Change"
-    
-    message = f"""
-{emoji} <b>{price_data['name']} - {alert}</b>
+def send_telegram_document(file_path, caption=''):
+    """Send document via Telegram"""
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendDocument"
+        with open(file_path, 'rb') as f:
+            files = {'document': f}
+            data = {
+                'chat_id': TELEGRAM_CHAT_ID,
+                'caption': caption
+            }
+            response = requests.post(url, files=files, data=data, timeout=30)
+            response.raise_for_status()
+        return True
+    except Exception as e:
+        print(f"❌ Telegram document error: {e}")
+        return False
 
-💰 <b>Price:</b> ${price_data['price']:,.2f}
-📊 <b>Change:</b> {price_data['change']:+.2f} ({price_data['change_percent']:+.2f}%)
-📈 <b>High:</b> ${price_data['high']:,.2f} | <b>Low:</b> ${price_data['low']:,.2f}
-
-🎯 <b>Analysis:</b>
-• Trend: {analysis.get('trend', 'N/A')} ({analysis.get('strength', 'N/A')})
-• Recommendation: {analysis.get('recommendation', 'HOLD')}
-• Risk Level: {analysis.get('risk_level', 'MEDIUM')}
-
-💡 <b>Insight:</b> {analysis.get('key_insight', 'No insight available')}
-
-🔹 Support: ${analysis.get('support', price_data['low']):,.2f}
-🔸 Resistance: ${analysis.get('resistance', price_data['high']):,.2f}
-
-📅 Updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} UTC
-🔗 Source: {price_data.get('source', 'Market Data')}
-"""
-    return message
-
-# ============ MONITORING LOOP ============
+# ============ MONITORING FUNCTIONS ============
 def monitor_commodities():
-    """Main monitoring function"""
-    print("\n" + "="*60)
-    print(f"🚀 Monitoring Cycle Started - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print("="*60)
+    """Monitor all commodities (runs every 10 minutes)"""
+    print(f"\n⏰ Monitoring cycle at {datetime.now().strftime('%H:%M:%S')}")
     
-    for symbol, name in WATCHLIST.items():
-        print(f"\n📊 Checking {name}...")
-        
-        # Fetch data
+    current_hour = datetime.now().hour
+    
+    # Set baseline at 9 AM
+    if current_hour == 9 and datetime.now().minute < 10:
+        print("📌 Setting 9 AM baseline prices...")
+        for symbol in WATCHLIST.keys():
+            price_data = fetch_commodity_data(symbol)
+            if price_data:
+                daily_start_prices[symbol] = price_data['price']
+    
+    # Fetch and store all commodity data
+    for symbol, info in WATCHLIST.items():
         price_data = fetch_commodity_data(symbol)
         
-        if not price_data:
-            print(f"  ⚠️ No data available for {symbol}")
-            continue
-        
-        # Store in history
-        if symbol not in price_history:
-            price_history[symbol] = []
-        price_history[symbol].append(price_data['price'])
-        
-        # Keep only last 100 records
-        if len(price_history[symbol]) > 100:
-            price_history[symbol] = price_history[symbol][-100:]
-        
-        # Generate AI analysis
-        if GEMINI_API_KEY:
-            analysis = generate_price_targets(symbol, price_data, price_history.get(symbol, []))
-        else:
-            analysis = {
-                'trend': 'N/A',
-                'strength': 'N/A',
-                'recommendation': 'HOLD',
-                'risk_level': 'MEDIUM',
-                'key_insight': 'AI analysis not configured',
-                'support': price_data['low'],
-                'resistance': price_data['high']
-            }
-        
-        # Send notification
-        if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
-            message = format_telegram_message(price_data, analysis)
-            send_telegram_notification(message)
-        
-        print(f"  ✅ {name}: ${price_data['price']:,.2f} | {analysis.get('recommendation', 'HOLD')}")
+        if price_data:
+            timestamp = datetime.now().isoformat()
+            
+            # Initialize history if needed
+            if symbol not in price_history:
+                price_history[symbol] = []
+            
+            # Store price with timestamp
+            price_history[symbol].append((timestamp, price_data['price']))
+            
+            # Keep only today's data (clear at midnight)
+            if datetime.now().hour == 0 and datetime.now().minute < 10:
+                price_history[symbol] = []
+                if symbol in daily_start_prices:
+                    del daily_start_prices[symbol]
+            
+            print(f"  ✅ {info['name']}: ${price_data['price']:.2f} ({price_data.get('source', 'N/A')})")
+
+def send_hourly_report():
+    """Send hourly report with Robusta chart and all commodities summary"""
+    print("\n📊 Generating hourly report...")
     
-    print("\n" + "="*60)
-    print("✅ Monitoring Cycle Completed")
-    print("="*60 + "\n")
+    # Generate Robusta Coffee chart
+    robusta_chart = generate_price_chart('RC=F', 'Robusta Coffee')
+    
+    if robusta_chart and TELEGRAM_BOT_TOKEN:
+        caption = f"☕ *Robusta Coffee - Hourly Update*\n{datetime.now().strftime('%Y-%m-%d %H:%M')}"
+        send_telegram_photo(robusta_chart, caption)
+    
+    # Generate and send summary for all commodities
+    summary = generate_daily_summary()
+    if TELEGRAM_BOT_TOKEN:
+        send_telegram_message(summary)
+    
+    print("✅ Hourly report sent!")
+
+def send_weekly_report():
+    """Send weekly PDF report (Friday only)"""
+    if datetime.now().weekday() != 4:  # 4 = Friday
+        return
+    
+    print("\n📄 Generating weekly PDF report...")
+    
+    pdf_path = generate_weekly_pdf_report()
+    
+    if pdf_path and TELEGRAM_BOT_TOKEN:
+        caption = f"📊 Abu Auf Commodities - Weekly Report\n{datetime.now().strftime('%Y-%m-%d')}"
+        send_telegram_document(pdf_path, caption)
+        print("✅ Weekly report sent!")
+    else:
+        print("⚠️ Weekly report generation failed")
 
 # ============ FLASK WEB SERVER ============
 app = Flask(__name__)
@@ -329,8 +720,9 @@ def home():
     """Health check endpoint"""
     return jsonify({
         'status': 'online',
-        'service': 'Robusta Coffee Monitor',
-        'version': '2.0',
+        'service': 'Abu Auf Commodities Monitor',
+        'version': '3.0',
+        'commodities': len(WATCHLIST),
         'timestamp': datetime.now().isoformat()
     })
 
@@ -340,65 +732,86 @@ def trigger_monitor():
     Thread(target=monitor_commodities).start()
     return jsonify({'status': 'monitoring started'})
 
+@app.route('/hourly')
+def trigger_hourly():
+    """Manual trigger for hourly report"""
+    Thread(target=send_hourly_report).start()
+    return jsonify({'status': 'hourly report generation started'})
+
+@app.route('/weekly')
+def trigger_weekly():
+    """Manual trigger for weekly report"""
+    Thread(target=send_weekly_report).start()
+    return jsonify({'status': 'weekly report generation started'})
+
 @app.route('/prices')
 def get_prices():
     """Get current prices for all commodities"""
     prices = {}
-    for symbol, name in WATCHLIST.items():
-        data = fetch_commodity_data(symbol)
-        if data:
+    for symbol, info in WATCHLIST.items():
+        if symbol in price_history and len(price_history[symbol]) > 0:
+            current_price = price_history[symbol][-1][1]
+            baseline = daily_start_prices.get(symbol, price_history[symbol][0][1])
+            
             prices[symbol] = {
-                'name': name,
-                'price': data['price'],
-                'change': data['change'],
-                'change_percent': data['change_percent'],
-                'source': data.get('source', 'Unknown')
+                'name': info['name'],
+                'type': info['type'],
+                'current': current_price,
+                'baseline': baseline,
+                'change': current_price - baseline,
+                'change_percent': ((current_price - baseline) / baseline * 100) if baseline else 0
             }
     return jsonify(prices)
 
-@app.route('/history/<symbol>')
-def get_history(symbol):
-    """Get price history for a specific symbol"""
-    if symbol in price_history:
-        return jsonify({
-            'symbol': symbol,
-            'name': WATCHLIST.get(symbol, symbol),
-            'history': price_history[symbol]
-        })
-    return jsonify({'error': 'No history available'}), 404
-
-# ============ SCHEDULED MONITORING ============
+# ============ SCHEDULED TASKS ============
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 import atexit
 
 def start_scheduler():
-    """Start background scheduler for monitoring"""
-    scheduler = BackgroundScheduler()
+    """Start background scheduler"""
+    scheduler = BackgroundScheduler(timezone='Africa/Cairo')
     
-    # Run every 10 minutes during work hours (6 AM - 6 PM Cairo time)
+    # Monitor every 10 minutes (9 AM - 6 PM)
     scheduler.add_job(
         func=monitor_commodities,
-        trigger=CronTrigger(
-            minute='*/10',
-            hour='6-18',
-            timezone='Africa/Cairo'
-        ),
-        id='commodity_monitor',
-        name='Monitor commodities every 10 minutes',
-        replace_existing=True
+        trigger=CronTrigger(minute='*/10', hour='9-18'),
+        id='monitor_commodities',
+        name='Monitor commodities every 10 minutes'
+    )
+    
+    # Hourly report (9 AM - 6 PM, on the hour)
+    scheduler.add_job(
+        func=send_hourly_report,
+        trigger=CronTrigger(minute='0', hour='9-18'),
+        id='hourly_report',
+        name='Send hourly summary report'
+    )
+    
+    # Weekly report (Friday at 5 PM)
+    scheduler.add_job(
+        func=send_weekly_report,
+        trigger=CronTrigger(day_of_week='fri', hour='17', minute='0'),
+        id='weekly_report',
+        name='Send weekly PDF report'
     )
     
     scheduler.start()
-    print("✅ Scheduler started - monitoring every 10 minutes")
+    print("✅ Scheduler started!")
+    print("   📊 Monitoring: Every 10 minutes (9 AM - 6 PM)")
+    print("   📈 Hourly Reports: On the hour (9 AM - 6 PM)")
+    print("   📄 Weekly Report: Friday at 5 PM")
+    
+    # Run initial monitoring
     Thread(target=monitor_commodities).start()
+    
     atexit.register(lambda: scheduler.shutdown())
 
 # ============ MAIN ENTRY POINT ============
 if __name__ == '__main__':
-    print("🚀 Starting Robusta Coffee Monitor...")
+    print("🚀 Starting Abu Auf Commodities Monitor...")
     print(f"📊 Monitoring {len(WATCHLIST)} commodities")
-    print(f"🔔 Telegram: {'Enabled' if TELEGRAM_BOT_TOKEN else 'Disabled'}")
+    print(f"📱 Telegram: {'Enabled' if TELEGRAM_BOT_TOKEN else 'Disabled'}")
     print(f"🧠 AI Analysis: {'Enabled' if GEMINI_API_KEY else 'Disabled'}")
     print("\n" + "="*60 + "\n")
     
