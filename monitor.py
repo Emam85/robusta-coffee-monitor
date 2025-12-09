@@ -1,10 +1,11 @@
 """
 Abu Auf Procurement Monitor - Platinum Edition
 Features:
-- ⏱️ 10-Min Market Snapshots (24/7)
-- 🔔 Hourly Buying Tips (6 AM - 6 PM Cairo Time)
+- ⏱️ 10-Min Market Snapshots
+- 🔔 Hourly Buying Tips (6 AM - 6 PM)
 - 📄 Weekly PDF Board Report
-- 🇪🇬 Cairo Timezone Logic
+- 🌾 Oils (Soy/Palm) Added
+- 🇪🇬 Landed Cost Calculator
 """
 import os
 import json
@@ -28,29 +29,27 @@ GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
 
 # ABU AUF SETTINGS
 USD_EGP_RATE = 50.5
-START_HOUR = 6       # 6:00 AM
-END_HOUR = 18        # 6:00 PM (18:00)
+MYR_USD_RATE = 0.23  # Approx conversion for Palm Oil (Ringgit to USD)
+START_HOUR = 6
+END_HOUR = 18
 
+# WATCHLIST
 WATCHLIST = {
     'RC=F': {'name': 'Robusta Coffee (ICE)', 'harvest': 'Oct-Jan (Vietnam)', 'origin': 'Vietnam'},
     'KC=F': {'name': 'Coffee Arabica (ICE)', 'harvest': 'Apr-Sep (Brazil)', 'origin': 'Brazil'},
     'CC=F': {'name': 'Cocoa (ICE)', 'harvest': 'Oct-Mar (Ivory Coast)', 'origin': 'West Africa'},
     'SB=F': {'name': 'Sugar (ICE)', 'harvest': 'Apr-Nov (Brazil)', 'origin': 'Brazil'},
     'ZW=F': {'name': 'Wheat (CBOT)', 'harvest': 'Jun-Aug (Global)', 'origin': 'Global'},
+    'ZL=F': {'name': 'Soybean Oil (CBOT)', 'harvest': 'Sep-Nov (USA)', 'origin': 'USA'},
+    'PO=F': {'name': 'Palm Oil (MDEX)', 'harvest': 'Year-Round (Malaysia)', 'origin': 'Malaysia'},
 }
 
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
 
-# ============ TIMEZONE HELPER (CRITICAL) ============
-def get_cairo_time():
-    # Render is UTC. Cairo is UTC+2 (Standard).
-    # We add 2 hours to server time to get Abu Auf time.
-    return datetime.utcnow() + timedelta(hours=2)
-
-def clean_for_pdf(text):
-    if not text: return ""
-    return text.encode('latin-1', 'ignore').decode('latin-1')
+# ============ TIMEZONE & HELPERS ============
+def get_cairo_time(): return datetime.utcnow() + timedelta(hours=2)
+def clean_for_pdf(text): return text.encode('latin-1', 'ignore').decode('latin-1') if text else ""
 
 # ============ DATA ENGINE ============
 def fetch_commodity_data(symbol):
@@ -60,12 +59,31 @@ def fetch_commodity_data(symbol):
         if data:
             price = data['price']
             egp_cost = 0
-            if symbol in ['RC=F', 'CC=F']: egp_cost = price * USD_EGP_RATE
-            elif symbol in ['KC=F', 'SB=F']: egp_cost = (price / 100) * 2204.62 * USD_EGP_RATE
-            elif symbol == 'ZW=F': egp_cost = (price / 100) * 36.74 * USD_EGP_RATE
+            
+            # --- COST CALCULATOR ---
+            if symbol in ['RC=F', 'CC=F']: 
+                # Direct USD/Ton
+                egp_cost = price * USD_EGP_RATE
+            
+            elif symbol in ['KC=F', 'SB=F', 'ZL=F']: 
+                # Cents/lb -> USD/Ton -> EGP/Ton
+                # Formula: (Price / 100) * 2204.62 * Rate
+                egp_cost = (price / 100) * 2204.62 * USD_EGP_RATE
+            
+            elif symbol == 'ZW=F': 
+                # Cents/Bushel -> USD/Ton
+                egp_cost = (price / 100) * 36.74 * USD_EGP_RATE
+                
+            elif symbol == 'PO=F':
+                # MYR/Ton -> USD/Ton -> EGP/Ton
+                usd_price = price * MYR_USD_RATE
+                egp_cost = usd_price * USD_EGP_RATE
+                
             data['egp_cost'] = round(egp_cost, 2)
             return data
-    except: return None
+    except Exception as e:
+        print(f"Error {symbol}: {e}")
+    return None
 
 # ============ AI ENGINE ============
 def get_harvest_status(symbol):
@@ -74,12 +92,22 @@ def get_harvest_status(symbol):
     status = "OFF-SEASON"
     if curr in ["Oct", "Nov", "Dec", "Jan"] and "Oct" in harvest_months: status = "PEAK HARVEST"
     elif curr in ["Apr", "May", "Jun", "Jul"] and "Apr" in harvest_months: status = "PEAK HARVEST"
+    elif curr in ["Sep", "Oct", "Nov"] and "Sep" in harvest_months: status = "PEAK HARVEST"
     return f"{harvest_months} | {status}"
+
+def check_freight_crisis():
+    try:
+        model = genai.GenerativeModel('gemini-2.0-flash-exp')
+        prompt = "Act as Logistics Analyst. Summarize Global Freight Risks (Red Sea/Suez) for Egypt. Return JSON: {'risk': 'HIGH/MED/LOW', 'headline': 'Short Headline', 'advice': 'One sentence advice'}"
+        response = model.generate_content(prompt)
+        return json.loads(response.text.replace('```json', '').replace('```', '').strip())
+    except: return {"risk": "UNKNOWN", "headline": "No Data", "advice": "Check local forwarders."}
 
 def generate_ai_content(symbol, price_data, mode="DAILY"):
     try:
         model = genai.GenerativeModel('gemini-2.0-flash-exp')
         egp = f"{price_data['egp_cost']:,.0f} EGP"
+        
         if mode == "TIP":
             prompt = f"Act as Abu Auf Procurement. Short buying tip for {price_data['name']} (${price_data['price']}). Max 15 words."
             return model.generate_content(prompt).text
@@ -100,43 +128,39 @@ def generate_chart(name, current_price, targets, filename=None):
         prices = [current_price * (1 + random.uniform(-0.02, 0.02)) for _ in range(30)]
         prices[-1] = current_price
         plt.plot(dates, prices, color='#f97316', linewidth=2, label='History')
-        
         f_dates = [datetime.now()]
         f_prices = [current_price]
         for i, t in enumerate(targets):
             f_dates.append(datetime.now() + timedelta(weeks=i+1))
             f_prices.append(t['price'])
         plt.plot(f_dates, f_prices, color='#f97316', linestyle=':', marker='o')
-        
         for i, (d, p) in enumerate(zip(f_dates[1:], f_prices[1:])):
             label = targets[i].get('label', f'T{i}')
             plt.annotate(f"{label}\n${p:,.0f}", (d, p), xytext=(0, 15), textcoords='offset points', ha='center', fontsize=8, bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="#f97316"))
-
         plt.grid(True, linestyle='-', alpha=0.1)
         plt.gcf().autofmt_xdate()
-        
-        if filename:
-            plt.savefig(filename, format='png', bbox_inches='tight', dpi=100)
-            plt.close()
-            return filename
-        else:
-            buf = io.BytesIO()
-            plt.savefig(buf, format='png', bbox_inches='tight', dpi=100)
-            buf.seek(0)
-            plt.close()
-            return buf
+        if filename: plt.savefig(filename, format='png', bbox_inches='tight', dpi=100); plt.close(); return filename
+        else: buf = io.BytesIO(); plt.savefig(buf, format='png', bbox_inches='tight', dpi=100); buf.seek(0); plt.close(); return buf
     except: return None
 
 # ============ PDF ENGINE ============
 class PDF(FPDF):
     def header(self):
         self.set_font('Arial', 'B', 16)
-        self.cell(0, 10, 'ABU AUF - WEEKLY REPORT', 0, 1, 'C')
+        self.cell(0, 10, 'ABU AUF - WEEKLY SOURCING REPORT', 0, 1, 'C')
         self.ln(5)
 
 def generate_pdf_report():
     pdf = PDF()
     pdf.add_page()
+    freight = check_freight_crisis()
+    pdf.set_fill_color(255, 240, 240)
+    pdf.set_font('Arial', 'B', 12)
+    pdf.cell(0, 10, f"FREIGHT RISK: {clean_for_pdf(freight.get('risk', 'UNKNOWN'))}", 1, 1, 'L', 1)
+    pdf.set_font('Arial', '', 10)
+    pdf.multi_cell(0, 6, f"Advice: {clean_for_pdf(freight.get('advice', 'Check local forwarders.'))}")
+    pdf.ln(5)
+    
     for symbol, info in WATCHLIST.items():
         data = fetch_commodity_data(symbol)
         if not data: continue
@@ -145,14 +169,12 @@ def generate_pdf_report():
         pdf.set_font('Arial', 'B', 14)
         pdf.cell(0, 8, clean_for_pdf(info['name']), 0, 1)
         pdf.set_font('Arial', '', 10)
-        pdf.cell(0, 6, f"Price: ${data['price']:,.2f} | Landed: {data['egp_cost']:,.0f} EGP", 0, 1)
+        pdf.cell(0, 6, f"Price: {data['price']:,.2f} | Landed: {data['egp_cost']:,.0f} EGP", 0, 1)
         pdf.cell(0, 6, f"Strategy: {clean_for_pdf(ai.get('recommendation', 'WAIT'))}", 0, 1)
         
         chart_file = f"chart_{symbol.replace('=','')}.png"
         generate_chart(info['name'], data['price'], ai.get('targets', []), filename=chart_file)
-        if os.path.exists(chart_file):
-            pdf.image(chart_file, x=10, w=170)
-            os.remove(chart_file)
+        if os.path.exists(chart_file): pdf.image(chart_file, x=10, w=170); os.remove(chart_file)
         pdf.ln(5)
     
     outfile = "AbuAuf_Report.pdf"
@@ -173,20 +195,16 @@ def send_telegram(text=None, photo=None, doc=None):
 
 # ============ LOGIC ============
 def run_snapshot():
-    cairo_now = get_cairo_time()
-    msg = f"⏱️ <b>SNAPSHOT ({cairo_now.strftime('%I:%M %p')})</b>\n"
+    cairo = get_cairo_time()
+    msg = f"⏱️ <b>SNAPSHOT ({cairo.strftime('%I:%M %p')})</b>\n"
     for s, i in WATCHLIST.items():
         d = fetch_commodity_data(s)
-        if d: msg += f"▫️ {i['name'].split()[0]}: ${d['price']:,.0f}\n"
+        if d: msg += f"▫️ {i['name'].split()[0]}: ${d['price']:,.2f}\n"
     send_telegram(msg)
 
 def run_tips():
-    cairo_now = get_cairo_time()
-    # Check Hours (6 AM - 6 PM)
-    if not (START_HOUR <= cairo_now.hour <= END_HOUR): 
-        print(f"Skipping Tips: It is {cairo_now.hour}:00 in Cairo (Outside {START_HOUR}-{END_HOUR})")
-        return
-
+    cairo = get_cairo_time()
+    if not (START_HOUR <= cairo.hour <= END_HOUR): return
     msg = "🔔 <b>SOURCING TIPS</b>\n"
     for s, i in WATCHLIST.items():
         d = fetch_commodity_data(s)
@@ -201,19 +219,12 @@ def run_pdf():
     except Exception as e: send_telegram(f"PDF Error: {e}")
 
 def monitor_cycle():
-    cairo_now = get_cairo_time()
-    print(f"Checking schedule... Cairo Time: {cairo_now}")
-    
-    # Weekly (Mon 9 AM)
-    if cairo_now.weekday() == 0 and cairo_now.hour == 9 and cairo_now.minute < 15: run_pdf(); return
-    
-    # Hourly Tips (Top of hour)
-    if cairo_now.minute < 5: run_tips()
-    
-    # Always run snapshot
+    cairo = get_cairo_time()
+    if cairo.weekday() == 0 and cairo.hour == 9 and cairo.minute < 15: run_pdf(); return
+    if cairo.minute < 5: run_tips()
     run_snapshot()
 
-# ============ APP ============
+# ============ WEB ============
 app = Flask(__name__)
 @app.route('/')
 def home(): return jsonify({'status': 'online'})
