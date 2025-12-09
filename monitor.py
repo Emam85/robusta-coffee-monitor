@@ -21,7 +21,14 @@ import google.generativeai as genai
 from fpdf import FPDF
 from threading import Thread
 from flask import Flask, jsonify
-from barchart_intelligent import get_barchart_robusta_jan26
+
+# Import the Intelligent Scraper
+# ⚠️ MAKE SURE 'barchart_intelligent.py' EXISTS IN YOUR REPO
+try:
+    from barchart_intelligent import get_barchart_robusta_jan26
+except ImportError:
+    print("⚠️ 'barchart_intelligent.py' not found! Smart scraping disabled.")
+    def get_barchart_robusta_jan26(): return None
 
 # ============ CONFIGURATION ============
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
@@ -78,35 +85,8 @@ def fetch_commodity_data(symbol):
                 'timestamp': datetime.now().isoformat(),
                 'name': 'Robusta Coffee Jan 26 (Barchart)',
                 'history': [barchart_data['price']] * 20,
-                'source': barchart_data['source']
-            }
-        else:
-            print("⚠️ Barchart failed, falling back to Investing.com")
-    
-    # FALLBACK: Use existing commodity_fetcher for all others
-    """Fetch commodity data with Barchart priority for Robusta"""
-    
-    # SPECIAL HANDLING: Robusta Coffee - Use Barchart Jan '26 contract
-    if symbol == 'RC=F':
-        print(f"🎯 Fetching Robusta from Barchart (Jan '26 contract)...")
-        barchart_data = get_barchart_robusta_jan26()
-        
-        if barchart_data:
-            # Convert to standard format
-            return {
-                'symbol': symbol,
-                'price': barchart_data['price'],
-                'change': barchart_data.get('change', 0),
-                'change_percent': barchart_data.get('percent', 0),
-                'high': barchart_data.get('high', barchart_data['price']),
-                'low': barchart_data.get('low', barchart_data['price']),
-                'volume': barchart_data.get('volume', 0),
-                'open': barchart_data['price'],
-                'prev_close': barchart_data['price'] - barchart_data.get('change', 0),
-                'timestamp': datetime.now().isoformat(),
-                'name': 'Robusta Coffee Jan 26 (Barchart)',
-                'history': [barchart_data['price']] * 20,
-                'source': barchart_data['source']
+                'source': barchart_data['source'],
+                'egp_cost': round(barchart_data['price'] * USD_EGP_RATE, 2)
             }
         else:
             print("⚠️ Barchart failed, falling back to Investing.com")
@@ -114,7 +94,7 @@ def fetch_commodity_data(symbol):
     # FALLBACK: Use existing commodity_fetcher for all others
     from commodity_fetcher import fetch_commodity_data as fetch_multi
     try:
-        print(f"🔍 Fetching {symbol}...")
+        print(f"🔍 Fetching {symbol} via Investing.com...")
         data = fetch_multi(symbol, WATCHLIST[symbol]['name'])
         if data:
             price = data['price']
@@ -263,7 +243,6 @@ def run_tips_logic():
         d = fetch_commodity_data(s)
         if d: 
             ai = generate_ai_content(s, d, mode="TIP")
-            # This uses HTML tags like <b>. If it fails, the new logic sends plain text automatically.
             msg = f"""
 📦 <b>{i['name'].split()[0]}</b> (${d['price']:,.2f})
 ⚡ <b>Action:</b> {ai.get('action', 'WAIT')}
@@ -271,7 +250,7 @@ def run_tips_logic():
 ⚠️ <b>Risk:</b> {ai.get('risk', 'Medium')}
 """
             send_telegram(msg)
-            time.sleep(2) # Slight delay to be safe
+            time.sleep(2)
 
 def monitor_cycle():
     cairo = get_cairo_time()
