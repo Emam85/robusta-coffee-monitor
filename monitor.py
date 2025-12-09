@@ -52,7 +52,7 @@ EMAIL_FROM = os.environ.get('EMAIL_FROM')
 EMAIL_PASSWORD = os.environ.get('EMAIL_PASSWORD')
 EMAIL_TO = os.environ.get('EMAIL_TO', EMAIL_FROM)
 # Parse multiple email recipients (comma-separated)
-EMAIL_RECIPIENTS = [email.strip() for email in EMAIL_TO.split(',')]
+EMAIL_RECIPIENTS = [email.strip() for email in EMAIL_TO.split(',')] if EMAIL_TO else []
 
 # Abu Auf Portfolio - Updated
 WATCHLIST = {
@@ -135,6 +135,125 @@ def fetch_commodity_data(symbol):
         print(f"❌ Error fetching {symbol}: {e}")
     
     return None
+
+# ============ TELEGRAM NOTIFICATIONS ============
+def send_telegram_message(message, parse_mode='Markdown'):
+    """Send text message via Telegram"""
+    try:
+        print(f"📤 Attempting to send Telegram message to {TELEGRAM_CHAT_ID}...") # Debug Log
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+        payload = {
+            'chat_id': TELEGRAM_CHAT_ID,
+            'text': message,
+            'parse_mode': parse_mode,
+            'disable_web_page_preview': True
+        }
+        response = requests.post(url, json=payload, timeout=10)
+        response.raise_for_status()
+        print("✅ Telegram message sent successfully!") # Debug Log
+        return True
+    except Exception as e:
+        print(f"❌ Telegram error: {e}")
+        if 'response' in locals():
+            print(f"   Response text: {response.text}")
+        return False
+
+def send_telegram_photo(photo_buffer, caption=''):
+    """Send photo via Telegram"""
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
+        files = {'photo': ('chart.png', photo_buffer, 'image/png')}
+        data = {
+            'chat_id': TELEGRAM_CHAT_ID,
+            'caption': caption,
+            'parse_mode': 'Markdown'
+        }
+        response = requests.post(url, files=files, data=data, timeout=30)
+        response.raise_for_status()
+        return True
+    except Exception as e:
+        print(f"❌ Telegram photo error: {e}")
+        return False
+
+def send_telegram_document(file_path, caption=''):
+    """Send document via Telegram"""
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendDocument"
+        with open(file_path, 'rb') as f:
+            files = {'document': f}
+            data = {
+                'chat_id': TELEGRAM_CHAT_ID,
+                'caption': caption
+            }
+            response = requests.post(url, files=files, data=data, timeout=30)
+            response.raise_for_status()
+        return True
+    except Exception as e:
+        print(f"❌ Telegram document error: {e}")
+        return False
+
+# ============ MONITORING FUNCTIONS ============
+def monitor_commodities():
+    """Monitor all commodities (runs every 10 minutes)"""
+    print(f"\n⏰ Monitoring cycle at {datetime.now().strftime('%H:%M:%S')}")
+    
+    current_hour = datetime.now().hour
+    
+    # Set baseline at 9 AM
+    if current_hour == 9 and datetime.now().minute < 10:
+        print("📌 Setting 9 AM baseline prices...")
+        for symbol in WATCHLIST.keys():
+            price_data = fetch_commodity_data(symbol)
+            if price_data:
+                daily_start_prices[symbol] = price_data['price']
+    
+    # Message buffer for the 10-minute snapshot
+    snapshot_msg = f"⏱️ <b>SNAPSHOT ({datetime.now().strftime('%H:%M')})</b>\n"
+    has_data = False
+
+    # Fetch and store all commodity data
+    for symbol, info in WATCHLIST.items():
+        try:
+            price_data = fetch_commodity_data(symbol)
+            
+            if not price_data:
+                print(f"  ⚠️ No data for {info['name']}, skipping...")
+                continue
+            
+            has_data = True
+            timestamp = datetime.now().isoformat()
+            
+            # Initialize history if needed
+            if symbol not in price_history:
+                price_history[symbol] = []
+            
+            # Store price with timestamp
+            price_history[symbol].append((timestamp, price_data['price']))
+            
+            # Add to Telegram snapshot message
+            snapshot_msg += f"▫️ <b>{info['name'].split()[0]}</b>: ${price_data['price']:,.0f}\n"
+
+            # Memory protection: Keep max 144 records (24 hours)
+            if len(price_history[symbol]) > 144:
+                price_history[symbol] = price_history[symbol][-144:]
+            
+            # Keep only today's data (clear at midnight)
+            if datetime.now().hour == 0 and datetime.now().minute < 10:
+                price_history[symbol] = []
+                if symbol in daily_start_prices:
+                    del daily_start_prices[symbol]
+            
+            print(f"  ✅ {info['name']}: ${price_data['price']:.2f} ({price_data.get('source', 'N/A')})")
+        except Exception as e:
+            print(f"  ❌ Error fetching {info['name']}: {e}")
+            continue
+    
+    # [FIX] Send the snapshot message at the end of the loop
+    if has_data:
+        print("📤 Sending snapshot to Telegram...")
+        send_telegram_message(snapshot_msg, parse_mode='HTML')
+    else:
+        print("⚠️ No data fetched, skipping Telegram message.")
 
 # ============ CHART GENERATION ============
 def generate_price_chart(symbol, commodity_name):
@@ -595,105 +714,6 @@ Be specific: "Lock in 30% of Q1 coffee needs" not "consider hedging." Focus on V
 • Consider forward contracts for key ingredients showing upward trends
 • Diversify supplier base to mitigate single-origin risk
 • Review hedging strategies for commodities with high volatility"""
-
-# ============ TELEGRAM NOTIFICATIONS ============
-def send_telegram_message(message, parse_mode='Markdown'):
-    """Send text message via Telegram"""
-    try:
-        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-        payload = {
-            'chat_id': TELEGRAM_CHAT_ID,
-            'text': message,
-            'parse_mode': parse_mode,
-            'disable_web_page_preview': True
-        }
-        response = requests.post(url, json=payload, timeout=10)
-        response.raise_for_status()
-        return True
-    except Exception as e:
-        print(f"❌ Telegram error: {e}")
-        return False
-
-def send_telegram_photo(photo_buffer, caption=''):
-    """Send photo via Telegram"""
-    try:
-        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
-        files = {'photo': ('chart.png', photo_buffer, 'image/png')}
-        data = {
-            'chat_id': TELEGRAM_CHAT_ID,
-            'caption': caption,
-            'parse_mode': 'Markdown'
-        }
-        response = requests.post(url, files=files, data=data, timeout=30)
-        response.raise_for_status()
-        return True
-    except Exception as e:
-        print(f"❌ Telegram photo error: {e}")
-        return False
-
-def send_telegram_document(file_path, caption=''):
-    """Send document via Telegram"""
-    try:
-        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendDocument"
-        with open(file_path, 'rb') as f:
-            files = {'document': f}
-            data = {
-                'chat_id': TELEGRAM_CHAT_ID,
-                'caption': caption
-            }
-            response = requests.post(url, files=files, data=data, timeout=30)
-            response.raise_for_status()
-        return True
-    except Exception as e:
-        print(f"❌ Telegram document error: {e}")
-        return False
-
-# ============ MONITORING FUNCTIONS ============
-def monitor_commodities():
-    """Monitor all commodities (runs every 10 minutes)"""
-    print(f"\n⏰ Monitoring cycle at {datetime.now().strftime('%H:%M:%S')}")
-    
-    current_hour = datetime.now().hour
-    
-    # Set baseline at 9 AM
-    if current_hour == 9 and datetime.now().minute < 10:
-        print("📌 Setting 9 AM baseline prices...")
-        for symbol in WATCHLIST.keys():
-            price_data = fetch_commodity_data(symbol)
-            if price_data:
-                daily_start_prices[symbol] = price_data['price']
-    
-    # Fetch and store all commodity data
-    for symbol, info in WATCHLIST.items():
-        try:
-            price_data = fetch_commodity_data(symbol)
-            
-            if not price_data:
-                print(f"  ⚠️ No data for {info['name']}, skipping...")
-                continue
-            timestamp = datetime.now().isoformat()
-            
-            # Initialize history if needed
-            if symbol not in price_history:
-                price_history[symbol] = []
-            
-            # Store price with timestamp
-            price_history[symbol].append((timestamp, price_data['price']))
-            
-            # Memory protection: Keep max 144 records (24 hours)
-            if len(price_history[symbol]) > 144:
-                price_history[symbol] = price_history[symbol][-144:]
-            
-            # Keep only today's data (clear at midnight)
-            if datetime.now().hour == 0 and datetime.now().minute < 10:
-                price_history[symbol] = []
-                if symbol in daily_start_prices:
-                    del daily_start_prices[symbol]
-            
-            print(f"  ✅ {info['name']}: ${price_data['price']:.2f} ({price_data.get('source', 'N/A')})")
-        except Exception as e:
-            print(f"  ❌ Error fetching {info['name']}: {e}")
-            continue
 
 def send_hourly_report():
     """Send hourly report with Robusta chart and all commodities summary"""
