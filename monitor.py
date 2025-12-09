@@ -73,7 +73,7 @@ WATCHLIST = {
 # Configure Gemini
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
-    analysis_model = genai.GenerativeModel('gemini-2.0-flash-exp')
+    analysis_model = genai.GenerativeModel('gemini-1.5-flash')
 else:
     analysis_model = None
 
@@ -85,7 +85,6 @@ arabica_contracts = []  # List of 2 contract dicts
 
 # ============ MARKET HOURS DETECTION ============
 def is_market_hours():
-    return True  # TESTING MODE
     """
     Check if current time is within trading hours
     Monday-Friday 09:00-21:00 Cairo Time (Full Coffee Trading Coverage)
@@ -677,7 +676,7 @@ def generate_daily_summary():
 def generate_executive_summary():
     """Generate executive summary text for PDF"""
     try:
-        model = genai.GenerativeModel('gemini-2.0-flash-exp')
+        model = genai.GenerativeModel('gemini-1.5-flash')
         
         # Collect week's data
         summary_data = []
@@ -975,7 +974,7 @@ def generate_commodity_deep_analysis(symbol, info, override_price=None):
             week_end = prices[-1]
             week_change_pct = ((week_end - week_start) / week_start * 100) if week_start else 0
         
-        model = genai.GenerativeModel('gemini-2.0-flash-exp')
+        model = genai.GenerativeModel('gemini-1.5-flash')
         
         prompt = f"""As a commodity analyst, write a 2-3 sentence supply/demand update for {info['name']}.
 Price moved {week_change_pct:+.2f}% this week (from ${week_start:.2f} to ${week_end:.2f}).
@@ -999,7 +998,7 @@ Write in professional commodity analyst style. Be specific and actionable. NO ge
 def generate_risk_analysis():
     """Generate risk factors and outlook"""
     try:
-        model = genai.GenerativeModel('gemini-2.0-flash-exp')
+        model = genai.GenerativeModel('gemini-1.5-flash')
         prompt = """Write a 3-paragraph risk analysis for Abu Auf's commodity portfolio covering:
 1. MACROECONOMIC RISKS: Currency volatility, inflation, interest rates, geopolitical tensions affecting trade
 2. SUPPLY RISKS: Weather patterns (El Niño/La Niña), crop diseases, logistics disruptions, origin-specific issues
@@ -1013,7 +1012,7 @@ Keep it board-level: strategic, not overly technical. Focus on MATERIAL risks th
 def generate_procurement_recommendations():
     """Generate strategic procurement recommendations"""
     try:
-        model = genai.GenerativeModel('gemini-2.0-flash-exp')
+        model = genai.GenerativeModel('gemini-1.5-flash')
         # Get all current prices and trends
         commodities_summary = []
         for symbol, info in WATCHLIST.items():
