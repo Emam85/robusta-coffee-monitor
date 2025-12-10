@@ -131,8 +131,7 @@ def fetch_commodity_data(symbol):
     commodity_name = commodity_info['name']
     # SPECIAL CASE: Robusta Coffee - Try Barchart first
     if symbol == 'RC=F' and commodity_info.get('use_barchart', False):
-        print(f"
-🌊 WATERFALL FETCH: Robusta Coffee")
+        print(f"\n🌊 WATERFALL FETCH: Robusta Coffee")  # FIXED: Added \n inside string
         print("=" * 60)
         if HAS_BARCHART:
             barchart_data = get_barchart_robusta_jan26()
@@ -250,8 +249,7 @@ def fetch_arabica_contracts():
     global arabica_contracts
     if not HAS_BARCHART:
         return None
-    print("
-🌊 Fetching Arabica Coffee 4/5 (Last 2 Contracts)")
+    print(f"\n🌊 Fetching Arabica Coffee 4/5 (Last 2 Contracts)")  # FIXED
     print("=" * 60)
     contracts_data = get_barchart_arabica_last2()
     if contracts_data and len(contracts_data) == 2:
@@ -506,8 +504,7 @@ def send_telegram_document(file_path, caption=''):
 # ============ MONITORING FUNCTIONS ============
 def monitor_commodities():
     """Monitor all commodities (runs every 10 minutes during market hours only)"""
-    print(f"
-⏰ Monitoring cycle at {datetime.now().strftime('%H:%M:%S')}")
+    print(f"\n⏰ Monitoring cycle at {datetime.now().strftime('%H:%M:%S')}")  # FIXED
     # Check if market is open
     if not is_market_hours():
         print("🔒 Market is CLOSED - Skipping monitoring")
