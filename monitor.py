@@ -104,17 +104,19 @@ def is_market_hours():
     return market_open <= current_time <= market_close
 
 # ============ SESSION BASELINE MANAGEMENT ============
-def initialize_session_baseline(symbol, price):
+def initialize_session_baseline(symbol, opening_price, current_price):
     """Set baseline price at session start (used for calculating daily change)"""
     # CRITICAL: Only set baseline ONCE per session - never overwrite
     if symbol not in daily_start_prices:
-        daily_start_prices[symbol] = price
-        session_high_low[symbol] = {'high': price, 'low': price}
-        print(f"  📌 Baseline set for {symbol}: ${price:.2f}")
+        # Use opening price as baseline (this is the true session start)
+        daily_start_prices[symbol] = opening_price
+        # Initialize high/low with current price
+        session_high_low[symbol] = {'high': current_price, 'low': current_price}
+        print(f"  📌 Baseline set for {symbol}: Open=${opening_price:.2f} | Current=${current_price:.2f}")
     else:
         # Baseline already exists - just update high/low
         if symbol not in session_high_low:
-            session_high_low[symbol] = {'high': price, 'low': price}
+            session_high_low[symbol] = {'high': current_price, 'low': current_price}
 
 def update_session_high_low(symbol, price):
     """Update daily high/low for accurate range tracking"""
@@ -154,19 +156,24 @@ def fetch_commodity_data(symbol):
             if barchart_data and barchart_data.get('price', 0) > 0:
                 price = barchart_data['price']
                 
-                # Get opening price from Barchart
-                opening_price = barchart_data.get('open', price)
+                # Get opening price from Barchart (or use stored baseline if available)
+                fetched_open = barchart_data.get('open', None)
                 
                 # DEBUG: Show what we got from Barchart
-                print(f"  🔍 Barchart returned: Price=${price:.2f}, Open=${opening_price:.2f}")
+                print(f"  🔍 Barchart returned: Price=${price:.2f}, Open={fetched_open if fetched_open else 'N/A'}")
                 
-                # Initialize baseline ONCE with opening price
+                # SMART BASELINE LOGIC:
+                # 1. If we already have a baseline, use it (preserves true session start)
+                # 2. If no baseline exists and we got an opening price, use that
+                # 3. If no baseline and no opening price, use current price (first fetch scenario)
                 if symbol not in daily_start_prices:
+                    opening_price = fetched_open if fetched_open and fetched_open != price else price
                     daily_start_prices[symbol] = opening_price
                     session_high_low[symbol] = {'high': price, 'low': price}
                     print(f"  📌 NEW BASELINE SET: Open=${opening_price:.2f} | Current=${price:.2f}")
                 else:
-                    print(f"  ℹ️  Using existing baseline: ${daily_start_prices[symbol]:.2f}")
+                    opening_price = daily_start_prices[symbol]
+                    print(f"  ℹ️  Using existing baseline: ${opening_price:.2f}")
                 
                 # Calculate change from REAL opening price
                 baseline = daily_start_prices[symbol]
@@ -188,7 +195,7 @@ def fetch_commodity_data(symbol):
                     'change_percent': daily_change_pct,
                     'high': high,
                     'low': low,
-                    'open': opening_price,
+                    'open': baseline,  # Use baseline as the "open" for consistency
                     'volume': barchart_data.get('volume', 0),
                     'timestamp': datetime.now().isoformat(),
                     'name': commodity_name,
@@ -207,19 +214,21 @@ def fetch_commodity_data(symbol):
         if data:
             price = data.get('price', 0)
             
-            # Get opening price from data (or fallback to current)
-            opening_price = data.get('open', price)
+            # Get opening price from data (or use stored baseline if available)
+            fetched_open = data.get('open', None)
             
             # DEBUG: Show what we got from Investing.com
-            print(f"  🔍 Investing.com returned: Price=${price:.2f}, Open=${opening_price:.2f}")
+            print(f"  🔍 Investing.com returned: Price=${price:.2f}, Open={fetched_open if fetched_open else 'N/A'}")
             
-            # Initialize baseline ONCE with opening price
+            # SMART BASELINE LOGIC (same as Barchart):
             if symbol not in daily_start_prices:
+                opening_price = fetched_open if fetched_open and fetched_open != price else price
                 daily_start_prices[symbol] = opening_price
                 session_high_low[symbol] = {'high': price, 'low': price}
                 print(f"  📌 NEW BASELINE SET: Open=${opening_price:.2f} | Current=${price:.2f}")
             else:
-                print(f"  ℹ️  Using existing baseline: ${daily_start_prices[symbol]:.2f}")
+                opening_price = daily_start_prices[symbol]
+                print(f"  ℹ️  Using existing baseline: ${opening_price:.2f}")
             
             # Calculate change from REAL opening price
             baseline = daily_start_prices[symbol]
@@ -248,7 +257,7 @@ def fetch_commodity_data(symbol):
                 'change_percent': daily_change_pct,
                 'high': high,
                 'low': low,
-                'open': opening_price,
+                'open': baseline,  # Use baseline for consistency
                 'volume': data.get('volume', 0),
                 'timestamp': datetime.now().isoformat(),
                 'name': commodity_name,
@@ -279,18 +288,20 @@ def fetch_arabica_contracts():
         for i, contract in enumerate(contracts_data):
             symbol_key = f'KC_CONTRACT_{i+1}'
             price = contract['price']
-            opening_price = contract.get('open', price)
+            fetched_open = contract.get('open', None)
             
             # DEBUG: Show what we got
-            print(f"  🔍 Arabica {contract['contract']} returned: Price=${price:.2f}, Open=${opening_price:.2f}")
+            print(f"  🔍 Arabica {contract['contract']} returned: Price=${price:.2f}, Open={fetched_open if fetched_open else 'N/A'}")
             
-            # Initialize baseline ONCE with opening price
+            # SMART BASELINE LOGIC (same as other commodities):
             if symbol_key not in daily_start_prices:
+                opening_price = fetched_open if fetched_open and fetched_open != price else price
                 daily_start_prices[symbol_key] = opening_price
                 session_high_low[symbol_key] = {'high': price, 'low': price}
                 print(f"  📌 NEW BASELINE SET: {contract['contract']} Open=${opening_price:.2f} | Current=${price:.2f}")
             else:
-                print(f"  ℹ️  Using existing baseline: ${daily_start_prices[symbol_key]:.2f}")
+                opening_price = daily_start_prices[symbol_key]
+                print(f"  ℹ️  Using existing baseline: ${opening_price:.2f}")
             
             # Calculate change from REAL opening price
             baseline = daily_start_prices[symbol_key]

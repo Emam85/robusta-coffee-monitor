@@ -2,6 +2,7 @@
 Multi-source commodity data fetcher
 Primary: Investing.com (stable, reliable)
 Used as fallback when Barchart fails
+ENHANCED: Better opening price extraction
 """
 import requests
 import re
@@ -11,6 +12,7 @@ def fetch_from_investing_com(commodity_name):
     """
     Scrape commodity price from Investing.com
     This is the stable fallback source
+    ENHANCED: Now extracts opening price properly
     """
     try:
         # Map commodity names to Investing.com URLs
@@ -45,7 +47,9 @@ def fetch_from_investing_com(commodity_name):
         if response.status_code == 200:
             html = response.text
             price = None
+            open_price = None
             
+            # === EXTRACT CURRENT PRICE ===
             # Method 1: data-test attribute (primary)
             if 'data-test="instrument-price-last"' in html:
                 start = html.find('data-test="instrument-price-last"')
@@ -57,6 +61,7 @@ def fetch_from_investing_com(commodity_name):
                     price_str = match.group(1).replace(',', '').strip()
                     try:
                         price = float(price_str)
+                        print(f"    [Price Parser] Current: ${price:.2f}")
                     except:
                         pass
             
@@ -66,8 +71,58 @@ def fetch_from_investing_com(commodity_name):
                 if matches:
                     try:
                         price = float(matches[0].replace(',', ''))
+                        print(f"    [Price Parser] Current (Alt): ${price:.2f}")
                     except:
                         pass
+            
+            # === EXTRACT OPENING PRICE ===
+            if price:
+                # Method 1: Look for "Open" data in summary table
+                open_match = re.search(r'<dt[^>]*>Open[^<]*</dt>\s*<dd[^>]*>([0-9,]+\.?[0-9]*)</dd>', html, re.IGNORECASE)
+                if open_match:
+                    try:
+                        open_price = float(open_match.group(1).replace(',', ''))
+                        print(f"    [Open Parser] Method 1 (Label): ${open_price:.2f}")
+                    except:
+                        pass
+                
+                # Method 2: Look in data-test attributes
+                if not open_price:
+                    open_match = re.search(r'data-test="[^"]*open[^"]*"[^>]*>([0-9,]+\.?[0-9]*)', html, re.IGNORECASE)
+                    if open_match:
+                        try:
+                            open_price = float(open_match.group(1).replace(',', ''))
+                            print(f"    [Open Parser] Method 2 (Data-test): ${open_price:.2f}")
+                        except:
+                            pass
+                
+                # Method 3: Look for Open in table rows
+                if not open_price:
+                    open_match = re.search(r'<tr[^>]*>\s*<td[^>]*>Open[^<]*</td>\s*<td[^>]*>([0-9,]+\.?[0-9]*)</td>', html, re.IGNORECASE)
+                    if open_match:
+                        try:
+                            open_price = float(open_match.group(1).replace(',', ''))
+                            print(f"    [Open Parser] Method 3 (Table): ${open_price:.2f}")
+                        except:
+                            pass
+                
+                # Method 4: Look in JavaScript data objects
+                if not open_price:
+                    open_match = re.search(r'"open":\s*"?([0-9,]+\.?[0-9]*)"?', html)
+                    if open_match:
+                        try:
+                            open_price = float(open_match.group(1).replace(',', ''))
+                            print(f"    [Open Parser] Method 4 (JSON): ${open_price:.2f}")
+                        except:
+                            pass
+                
+                if not open_price:
+                    print("    [Open Parser] No opening price found")
+                
+                # Don't return open if it's the same as current (meaningless)
+                if open_price and abs(open_price - price) < 0.01:
+                    print(f"    [Open Parser] Open same as current, setting to None")
+                    open_price = None
             
             if price and price > 0:
                 return {
@@ -76,7 +131,7 @@ def fetch_from_investing_com(commodity_name):
                     'percent': 0,
                     'high': price,
                     'low': price,
-                    'open': price,  # Investing.com doesn't provide open, use current
+                    'open': open_price,  # Will be None if not found or same as current
                     'volume': 0,
                     'source': 'Investing.com'
                 }
@@ -123,6 +178,6 @@ if __name__ == "__main__":
         print(f"\nTesting {name}...")
         result = fetch_commodity_data(symbol, name)
         if result:
-            print(f"✅ SUCCESS: ${result['price']}")
+            print(f"✅ SUCCESS: ${result['price']} | Open: ${result.get('open', 'N/A')}")
         else:
             print(f"❌ FAILED")

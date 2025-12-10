@@ -2,6 +2,7 @@
 Multi-Layer Barchart Scraper with Cloudflare Bypass
 Version: DIAMOND+ (Robusta + Arabica Support)
 Supports: Robusta (RMF26), Arabica (Last 2 Contracts)
+ENHANCED: Better opening price extraction
 """
 import json
 import time
@@ -58,17 +59,21 @@ def extract_price_from_html(html):
 
 
 def extract_open_from_html(html):
-    """Extract opening price from Barchart HTML"""
+    """Extract opening price from Barchart HTML - ENHANCED VERSION"""
     try:
-        # Method 1: Look for "open" in JSON data
+        # Method 1: Look for "open" in JSON data (most reliable)
         match = re.search(r'"open":"?([\d,.]+)"?', html)
         if match:
-            return float(match.group(1).replace(',', ''))
+            open_val = float(match.group(1).replace(',', ''))
+            print(f"    [Open Parser] Method 1 (JSON): ${open_val:.2f}")
+            return open_val
         
-        # Method 2: Look in table data
+        # Method 2: Look in table data attributes
         match = re.search(r'data-open="([\d,.]+)"', html)
         if match:
-            return float(match.group(1).replace(',', ''))
+            open_val = float(match.group(1).replace(',', ''))
+            print(f"    [Open Parser] Method 2 (Data Attr): ${open_val:.2f}")
+            return open_val
         
         # Method 3: Find in bcQuoteApp variable
         if 'var bcQuoteApp' in html:
@@ -77,81 +82,28 @@ def extract_open_from_html(html):
             snippet = html[start:end]
             match = re.search(r'"open":\s*([\d,.]+)', snippet)
             if match:
-                return float(match.group(1).replace(',', ''))
-    except:
-        pass
-    return None
-
-def extract_arabica_contracts_from_table(html):
-    """
-    Extract Arabica Coffee contracts from Barchart table
-    Targets the specific table structure shown in the screenshot
-    """
-    contracts = []
-    
-    try:
-        # Look for table rows containing "Arabica Coffee 4/5"
-        # Pattern matches: <tr>...<a href="...">Arabica Coffee 4/5 (XXX 'YY)</a>...price data...</tr>
+                open_val = float(match.group(1).replace(',', ''))
+                print(f"    [Open Parser] Method 3 (bcQuoteApp): ${open_val:.2f}")
+                return open_val
         
-        # Find all table rows with Arabica Coffee
-        row_pattern = r'<tr[^>]*>.*?Arabica Coffee 4/5 \(([A-Za-z]+) \'(\d+)\).*?</tr>'
-        matches = re.findall(row_pattern, html, re.DOTALL)
+        # Method 4: Look for "Open" label in the quote summary section
+        match = re.search(r'<dt[^>]*>Open[^<]*</dt>\s*<dd[^>]*>([\d,.]+)</dd>', html, re.IGNORECASE)
+        if match:
+            open_val = float(match.group(1).replace(',', ''))
+            print(f"    [Open Parser] Method 4 (Label): ${open_val:.2f}")
+            return open_val
         
-        if not matches:
-            print("  ⚠️ Could not find Arabica Coffee rows in table")
-            return None
-        
-        # For each row, extract detailed data
-        for month_name, year in matches[:2]:  # Get first 2 contracts
-            # Convert month name to contract code
-            month_map = {
-                'Dec': 'Z', 'Mar': 'H', 'May': 'K', 
-                'Jul': 'N', 'Sep': 'U'
-            }
-            month_code = month_map.get(month_name, month_name[0])
-            symbol = f"KC{month_code}{year}"
+        # Method 5: Look in the price summary table
+        match = re.search(r'<tr[^>]*>\s*<td[^>]*>Open[^<]*</td>\s*<td[^>]*>([\d,.]+)</td>', html, re.IGNORECASE)
+        if match:
+            open_val = float(match.group(1).replace(',', ''))
+            print(f"    [Open Parser] Method 5 (Table): ${open_val:.2f}")
+            return open_val
             
-            # Find the specific row for this contract
-            row_search = f'Arabica Coffee 4/5 \\({month_name} \'{year}\\)'
-            row_start = html.find(row_search)
-            if row_start == -1:
-                continue
-            
-            # Extract the table row
-            row_end = html.find('</tr>', row_start)
-            row_html = html[row_start:row_end]
-            
-            # Extract price (Latest column)
-            price_match = re.search(r'<td[^>]*>[\s\n]*([\d,.]+)[\s\n]*</td>', row_html)
-            if not price_match:
-                continue
-            price = float(price_match.group(1).replace(',', ''))
-            
-            # Extract change
-            change_match = re.search(r'<td[^>]*>[\s\n]*([+-]?[\d,.]+)[\s\n]*</td>', row_html)
-            change = float(change_match.group(1).replace(',', '')) if change_match else 0
-            
-            # Extract high and low
-            high_low_matches = re.findall(r'<td[^>]*>[\s\n]*([\d,.]+)[\s\n]*</td>', row_html)
-            high = float(high_low_matches[2].replace(',', '')) if len(high_low_matches) > 2 else price
-            low = float(high_low_matches[3].replace(',', '')) if len(high_low_matches) > 3 else price
-            
-            contracts.append({
-                'symbol': symbol,
-                'contract': f"{month_code}{year}",
-                'price': price,
-                'change': change,
-                'high': high,
-                'low': low
-            })
-            
-            print(f"  ✅ Parsed {symbol}: ${price:.2f}")
-        
-        return contracts if len(contracts) >= 2 else None
-        
+        print("    [Open Parser] All methods failed - no opening price found")
     except Exception as e:
-        print(f"  ⚠️ Error parsing Arabica table: {e}")
-        return None
+        print(f"    [Open Parser] Error: {e}")
+    return None
 
 # ============ METHOD 1: Official Hidden API ============
 def method_1_api(symbol="RMF26"):
@@ -170,12 +122,19 @@ def method_1_api(symbol="RMF26"):
             data = response.json()
             if 'data' in data and len(data['data']) > 0:
                 quote = data['data'][0]
+                price = float(str(quote.get('lastPrice', 0)).replace(',', ''))
+                open_price = float(str(quote.get('open', 0)).replace(',', ''))
+                
+                # Return None for open if it's 0 or same as price
+                if open_price == 0 or open_price == price:
+                    open_price = None
+                    
                 return {
-                    'price': float(str(quote.get('lastPrice', 0)).replace(',', '')),
+                    'price': price,
                     'change': float(str(quote.get('priceChange', 0)).replace(',', '')),
                     'high': float(str(quote.get('high', 0)).replace(',', '')),
                     'low': float(str(quote.get('low', 0)).replace(',', '')),
-                    'open': float(str(quote.get('open', 0)).replace(',', '')),
+                    'open': open_price,
                     'source': 'Barchart API'
                 }
     except: pass
@@ -200,8 +159,11 @@ def method_2_curl_cffi(symbol="RMF26"):
             if price:
                 # Try to extract opening price from HTML
                 open_price = extract_open_from_html(response.text)
-                if not open_price:
-                    open_price = price  # Fallback to current price
+                
+                # Return None for open if it's same as current price
+                if open_price and abs(open_price - price) < 0.01:
+                    open_price = None
+                    
                 return {
                     'price': price, 
                     'change': 0,
@@ -235,8 +197,11 @@ def method_3_antibot(symbol="RMF26"):
             if price:
                 # Try to extract opening price from HTML
                 open_price = extract_open_from_html(response.text)
-                if not open_price:
-                    open_price = price  # Fallback to current price
+                
+                # Return None for open if it's same as current price
+                if open_price and abs(open_price - price) < 0.01:
+                    open_price = None
+                    
                 return {
                     'price': price,
                     'change': 0,
@@ -312,12 +277,12 @@ if __name__ == "__main__":
     # Test Robusta
     robusta = get_barchart_robusta_jan26()
     if robusta:
-        print(f"✅ Robusta: ${robusta['price']:.2f}")
+        print(f"✅ Robusta: ${robusta['price']:.2f} | Open: ${robusta.get('open', 'N/A')}")
     
     # Test Arabica
     arabica_contracts = get_barchart_arabica_last2()
     if arabica_contracts:
-        print(f"\n✅ Arabica Contract 1 ({arabica_contracts[0]['symbol']}): ${arabica_contracts[0]['price']:.2f}")
-        print(f"✅ Arabica Contract 2 ({arabica_contracts[1]['symbol']}): ${arabica_contracts[1]['price']:.2f}")
+        print(f"\n✅ Arabica Contract 1 ({arabica_contracts[0]['symbol']}): ${arabica_contracts[0]['price']:.2f} | Open: ${arabica_contracts[0].get('open', 'N/A')}")
+        print(f"✅ Arabica Contract 2 ({arabica_contracts[1]['symbol']}): ${arabica_contracts[1]['price']:.2f} | Open: ${arabica_contracts[1].get('open', 'N/A')}")
     else:
         print("\n❌ Could not fetch Arabica contracts")
