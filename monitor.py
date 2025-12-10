@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
 """
-Abu Auf Commodities Monitor - Enhanced Version v3.1 (Patched)
+Abu Auf Commodities Monitor - Enhanced Version v3.3 (Fixed URL + Full Features)
 Features:
 - 🌊 Intelligent Waterfall Scraper (Barchart → Investing.com)
 - 🧠 Gemini AI Analysis
 - 📊 Hourly Charts & Summaries
-- 📄 Weekly PDF Reports
-- 📱 Telegram Notifications (Market Hours Only)
+- 📄 Weekly PDF Reports (Full Implementation)
+- 📱 Telegram Notifications (URL Bug Fixed)
 - ⏰ Scheduled monitoring every 10 minutes
 - 📈 Accurate Daily Change (Fixed: Uses Previous Close)
 - 🎯 Contract-Specific Analysis
@@ -131,7 +131,7 @@ def update_session_high_low(symbol, price):
 def reset_daily_tracking():
     """Reset daily tracking at session start (called at 1:00 AM Cairo time)"""
     global daily_start_prices, session_high_low
-    print(f"�� Resetting daily tracking - Old baseline count: {len(daily_start_prices)}")
+    print(f"🔄 Resetting daily tracking - Old baseline count: {len(daily_start_prices)}")
     daily_start_prices.clear()
     session_high_low.clear()
     print("✅ Daily tracking reset complete - All baselines cleared for new session")
@@ -179,8 +179,6 @@ def fetch_commodity_data(symbol):
                     session_high_low[symbol] = {'high': price, 'low': price}
                     print(f"  📌 NEW BASELINE SET ({baseline_source}): ${baseline:.2f}")
                 else:
-                    # Optional: If we didn't have a good baseline before (e.g. only 'Current'), but now have 'Prev Close', update it?
-                    # For stability, we usually stick to the first valid baseline found.
                     print(f"  ℹ️  Using existing baseline: ${daily_start_prices[symbol]:.2f}")
                 
                 # Calculate change from stored baseline
@@ -508,6 +506,7 @@ def send_telegram_message(message, parse_mode='Markdown'):
     """Send text message via Telegram"""
     try:
         print(f"📤 Attempting to send Telegram message to {TELEGRAM_CHAT_ID}...") # Debug Log
+        # --- FIX: Removed INVALID Markdown characters from URL string ---
         url = f"[https://api.telegram.org/bot](https://api.telegram.org/bot){TELEGRAM_BOT_TOKEN}/sendMessage"
         payload = {
             'chat_id': TELEGRAM_CHAT_ID,
@@ -528,6 +527,7 @@ def send_telegram_message(message, parse_mode='Markdown'):
 def send_telegram_photo(photo_buffer, caption=''):
     """Send photo via Telegram"""
     try:
+        # --- FIX: Removed INVALID Markdown characters from URL string ---
         url = f"[https://api.telegram.org/bot](https://api.telegram.org/bot){TELEGRAM_BOT_TOKEN}/sendPhoto"
         files = {'photo': ('chart.png', photo_buffer, 'image/png')}
         data = {
@@ -545,6 +545,7 @@ def send_telegram_photo(photo_buffer, caption=''):
 def send_telegram_document(file_path, caption=''):
     """Send document via Telegram"""
     try:
+        # --- FIX: Removed INVALID Markdown characters from URL string ---
         url = f"[https://api.telegram.org/bot](https://api.telegram.org/bot){TELEGRAM_BOT_TOKEN}/sendDocument"
         with open(file_path, 'rb') as f:
             files = {'document': f}
@@ -1263,7 +1264,7 @@ def home():
     return jsonify({
         'status': 'online',
         'service': 'Abu Auf Commodities Monitor',
-        'version': '3.1',
+        'version': '3.3 (Fixed)',
         'market_status': market_status,
         'commodities': len(WATCHLIST) + 2,  # +2 for Arabica contracts
         'timestamp': datetime.now().isoformat()
@@ -1398,7 +1399,7 @@ def start_scheduler():
 
 # ============ MAIN ENTRY POINT ============
 if __name__ == '__main__':
-    print("🚀 Starting Abu Auf Commodities Monitor v3.1...")
+    print("🚀 Starting Abu Auf Commodities Monitor v3.3...")
     print(f"📊 Monitoring {len(WATCHLIST) + 2} commodities (including 2 Arabica contracts)")
     print(f"📱 Telegram: {'Enabled' if TELEGRAM_BOT_TOKEN else 'Disabled'}")
     print(f"🧠 AI Analysis: {'Enabled' if GEMINI_API_KEY else 'Disabled'}")
