@@ -56,6 +56,32 @@ def extract_price_from_html(html):
         
     return None
 
+
+def extract_open_from_html(html):
+    """Extract opening price from Barchart HTML"""
+    try:
+        # Method 1: Look for "open" in JSON data
+        match = re.search(r'"open":"?([\d,.]+)"?', html)
+        if match:
+            return float(match.group(1).replace(',', ''))
+        
+        # Method 2: Look in table data
+        match = re.search(r'data-open="([\d,.]+)"', html)
+        if match:
+            return float(match.group(1).replace(',', ''))
+        
+        # Method 3: Find in bcQuoteApp variable
+        if 'var bcQuoteApp' in html:
+            start = html.find('var bcQuoteApp')
+            end = html.find('};', start) + 1
+            snippet = html[start:end]
+            match = re.search(r'"open":\s*([\d,.]+)', snippet)
+            if match:
+                return float(match.group(1).replace(',', ''))
+    except:
+        pass
+    return None
+
 def extract_arabica_contracts_from_table(html):
     """
     Extract Arabica Coffee contracts from Barchart table
@@ -131,7 +157,7 @@ def extract_arabica_contracts_from_table(html):
 def method_1_api(symbol="RMF26"):
     print(f"  [Method 1] Trying Official API for {symbol}...")
     url = "https://www.barchart.com/proxies/core-api/v1/quotes/get"
-    params = {'fields': 'lastPrice,priceChange,high,low', 'list': symbol}
+    params = {'fields': 'lastPrice,priceChange,high,low,open', 'list': symbol}
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'X-Requested-With': 'XMLHttpRequest',
@@ -149,6 +175,7 @@ def method_1_api(symbol="RMF26"):
                     'change': float(str(quote.get('priceChange', 0)).replace(',', '')),
                     'high': float(str(quote.get('high', 0)).replace(',', '')),
                     'low': float(str(quote.get('low', 0)).replace(',', '')),
+                    'open': float(str(quote.get('open', 0)).replace(',', '')),
                     'source': 'Barchart API'
                 }
     except: pass
@@ -170,12 +197,17 @@ def method_2_curl_cffi(symbol="RMF26"):
         response = cf_requests.get(url, headers=headers, impersonate="chrome120", timeout=10)
         if response.status_code == 200:
             price = extract_price_from_html(response.text)
-            if price: 
+            if price:
+                # Try to extract opening price from HTML
+                open_price = extract_open_from_html(response.text)
+                if not open_price:
+                    open_price = price  # Fallback to current price
                 return {
                     'price': price, 
-                    'change': 0,  # Not available from HTML scraping
+                    'change': 0,
                     'high': price,
                     'low': price,
+                    'open': open_price,
                     'source': 'Barchart (TLS)'
                 }
     except Exception as e: 
@@ -200,12 +232,17 @@ def method_3_antibot(symbol="RMF26"):
         response = standard_requests.get(url, headers=headers, timeout=10)
         if response.status_code == 200:
             price = extract_price_from_html(response.text)
-            if price: 
+            if price:
+                # Try to extract opening price from HTML
+                open_price = extract_open_from_html(response.text)
+                if not open_price:
+                    open_price = price  # Fallback to current price
                 return {
                     'price': price,
                     'change': 0,
                     'high': price,
                     'low': price,
+                    'open': open_price,
                     'source': 'Barchart (Headers)'
                 }
     except: pass

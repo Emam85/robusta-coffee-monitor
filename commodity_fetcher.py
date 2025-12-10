@@ -76,6 +76,7 @@ def fetch_from_investing_com(commodity_name):
                     'percent': 0,
                     'high': price,
                     'low': price,
+                    'open': price,  # Investing.com doesn't provide open, use current
                     'volume': 0,
                     'source': 'Investing.com'
                 }

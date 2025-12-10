@@ -1,0 +1,137 @@
+"""
+Multi-Layer Barchart Scraper with Cloudflare Bypass
+Version: HYBRID DIAMOND (Safe Startup + Robust Parsing)
+"""
+import json
+import time
+import random
+import re
+import requests as standard_requests
+
+# Try to import smart libraries
+try:
+    from curl_cffi import requests as cf_requests
+    HAS_CURL_CFFI = True
+except ImportError:
+    HAS_CURL_CFFI = False
+
+# Import UserAgent but DO NOT initialize it yet (Lazy Loading to prevent crash)
+try:
+    from fake_useragent import UserAgent
+    HAS_FAKE_UA = True
+except:
+    HAS_FAKE_UA = False
+
+# ============ HELPER: ROBUST PARSER ============
+def extract_price_from_html(html):
+    """Try 4 different ways to find the price in Barchart HTML"""
+    price = None
+    
+    # Strategy 1: JSON "lastPrice" (Common in script tags)
+    if not price:
+        matches = re.findall(r'"lastPrice":"?([\d,.]+)"?', html)
+        if matches: return float(matches[0].replace(',', ''))
+
+    # Strategy 2: Data Attribute (Common in table rows)
+    if not price:
+        matches = re.findall(r'data-last-price="([\d,.]+)"', html)
+        if matches: return float(matches[0].replace(',', ''))
+
+    # Strategy 3: Specific Script Variable (var bcQuoteApp)
+    if not price and 'var bcQuoteApp' in html:
+        try:
+            start = html.find('var bcQuoteApp')
+            end = html.find('};', start) + 1
+            snippet = html[start:end]
+            matches = re.findall(r'"lastPrice":\s*([\d,.]+)', snippet)
+            if matches: return float(matches[0].replace(',', ''))
+        except: pass
+
+    # Strategy 4: Span Class (Visual price)
+    if not price:
+        matches = re.findall(r'<span[^>]*class="[^"]*last-change[^"]*"[^>]*>([\d,.]+)</span>', html)
+        if matches: return float(matches[0].replace(',', ''))
+        
+    return None
+
+# ============ METHOD 1: Official Hidden API ============
+def method_1_api(symbol="RMF26"):
+    print(f"  [Method 1] Trying Official API...")
+    url = "https://www.barchart.com/proxies/core-api/v1/quotes/get"
+    params = {'fields': 'lastPrice', 'list': symbol}
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'X-Requested-With': 'XMLHttpRequest',
+        'Referer': f'https://www.barchart.com/futures/quotes/{symbol}'
+    }
+    
+    try:
+        response = standard_requests.get(url, params=params, headers=headers, timeout=5)
+        if response.status_code == 200:
+            data = response.json()
+            if 'data' in data and len(data['data']) > 0:
+                price = data['data'][0].get('lastPrice', 0)
+                return {'price': float(str(price).replace(',', '')), 'source': 'Barchart API'}
+    except: pass
+    return None
+
+# ============ METHOD 2: TLS Impersonation (curl_cffi) ============
+def method_2_curl_cffi(symbol="RMF26"):
+    if not HAS_CURL_CFFI: return None
+    print(f"  [Method 2] Trying TLS Impersonation (Chrome 120)...")
+    
+    url = f"https://www.barchart.com/futures/quotes/{symbol}"
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Upgrade-Insecure-Requests': '1'
+    }
+    
+    try:
+        response = cf_requests.get(url, headers=headers, impersonate="chrome120", timeout=10)
+        if response.status_code == 200:
+            price = extract_price_from_html(response.text)
+            if price: return {'price': price, 'source': 'Barchart (TLS)'}
+    except Exception as e: print(f"  ⚠️ Method 2 error: {e}")
+    return None
+
+# ============ METHOD 3: Anti-Bot Headers (Safety Net) ============
+def method_3_antibot(symbol="RMF26"):
+    print(f"  [Method 3] Trying Anti-Bot Headers...")
+    
+    # ⚠️ LAZY LOADING: Only load UserAgent if we actually reach Method 3
+    # This prevents the Startup Crash!
+    ua_string = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+    if HAS_FAKE_UA:
+        try:
+            ua = UserAgent() 
+            ua_string = ua.random
+        except: pass
+
+    url = f"https://www.barchart.com/futures/quotes/{symbol}"
+    headers = {'User-Agent': ua_string}
+    
+    try:
+        response = standard_requests.get(url, headers=headers, timeout=10)
+        if response.status_code == 200:
+            price = extract_price_from_html(response.text)
+            if price: return {'price': price, 'source': 'Barchart (Headers)'}
+    except: pass
+    return None
+
+# ============ MASTER FUNCTION ============
+def get_barchart_robusta_jan26():
+    print("\n🌊 Starting Waterfall Scraper...")
+    
+    # Try methods in order
+    res = method_1_api("RMF26")
+    if res: return res
+    
+    res = method_2_curl_cffi("RMF26")
+    if res: return res
+    
+    res = method_3_antibot("RMF26")
+    if res: return res
+
+    print("❌ All Smart Methods Failed")
+    return None
