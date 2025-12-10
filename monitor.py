@@ -345,14 +345,14 @@ def get_ai_analysis(commodity_data):
             display_name = f"{display_name} ({contract_info})"
         
         # Get baseline for context
-    symbol_key = commodity_data.get('symbol', '')
-    if symbol_key.startswith('KC_CONTRACT'):
-        baseline_key = symbol_key
-    else:
-        baseline_key = symbol_key
-    baseline_price = daily_start_prices.get(baseline_key, commodity_data['price'])
-    
-    prompt = f"""You are a professional commodity analyst. Analyze the following data for {display_name} and provide concise trading insights.
+        symbol_key = commodity_data.get('symbol', '')
+        if symbol_key.startswith('KC_CONTRACT'):
+            baseline_key = symbol_key
+        else:
+            baseline_key = symbol_key
+        baseline_price = daily_start_prices.get(baseline_key, commodity_data['price'])
+        
+        prompt = f"""You are a professional commodity analyst. Analyze the following data for {display_name} and provide concise trading insights.
 
 Current Data:
 - Opening Price (Session Baseline): ${baseline_price:,.2f}
@@ -415,6 +415,7 @@ Support/resistance should be realistic price levels based on the data provided."
             'support': commodity_data['low'],
             'resistance': commodity_data['high']
         }
+
 
 def format_commodity_snapshot(commodity_data, analysis):
     """Format a single commodity's data into the detailed snapshot format with clear source labels"""
