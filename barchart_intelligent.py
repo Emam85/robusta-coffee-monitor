@@ -2,7 +2,7 @@
 Multi-Layer Barchart Scraper with Cloudflare Bypass
 Version: DIAMOND+ (Robusta + Arabica Support)
 Supports: Robusta (RMF26), Arabica (Last 2 Contracts)
-ENHANCED: Better opening price extraction
+ENHANCED: Fetches Previous Close for accurate baselines
 """
 import json
 import time
@@ -18,7 +18,6 @@ try:
 except ImportError:
     HAS_CURL_CFFI = False
 
-# Import UserAgent but DO NOT initialize it yet (Lazy Loading to prevent crash)
 try:
     from fake_useragent import UserAgent
     HAS_FAKE_UA = True
@@ -29,18 +28,12 @@ except:
 def extract_price_from_html(html):
     """Try 4 different ways to find the price in Barchart HTML"""
     price = None
-    
-    # Strategy 1: JSON "lastPrice" (Common in script tags)
     if not price:
         matches = re.findall(r'"lastPrice":"?([\d,.]+)"?', html)
         if matches: return float(matches[0].replace(',', ''))
-
-    # Strategy 2: Data Attribute (Common in table rows)
     if not price:
         matches = re.findall(r'data-last-price="([\d,.]+)"', html)
         if matches: return float(matches[0].replace(',', ''))
-
-    # Strategy 3: Specific Script Variable (var bcQuoteApp)
     if not price and 'var bcQuoteApp' in html:
         try:
             start = html.find('var bcQuoteApp')
@@ -49,67 +42,48 @@ def extract_price_from_html(html):
             matches = re.findall(r'"lastPrice":\s*([\d,.]+)', snippet)
             if matches: return float(matches[0].replace(',', ''))
         except: pass
-
-    # Strategy 4: Span Class (Visual price)
     if not price:
         matches = re.findall(r'<span[^>]*class="[^"]*last-change[^"]*"[^>]*>([\d,.]+)</span>', html)
         if matches: return float(matches[0].replace(',', ''))
-        
     return None
 
+def extract_details_from_html(html):
+    """Extract Open and Previous Close from HTML"""
+    open_val = None
+    prev_close_val = None
 
-def extract_open_from_html(html):
-    """Extract opening price from Barchart HTML - ENHANCED VERSION"""
-    try:
-        # Method 1: Look for "open" in JSON data (most reliable)
-        match = re.search(r'"open":"?([\d,.]+)"?', html)
-        if match:
-            open_val = float(match.group(1).replace(',', ''))
-            print(f"    [Open Parser] Method 1 (JSON): ${open_val:.2f}")
-            return open_val
-        
-        # Method 2: Look in table data attributes
+    # --- EXTRACT OPEN ---
+    match = re.search(r'"open":"?([\d,.]+)"?', html)
+    if match: open_val = float(match.group(1).replace(',', ''))
+    
+    if not open_val:
         match = re.search(r'data-open="([\d,.]+)"', html)
-        if match:
-            open_val = float(match.group(1).replace(',', ''))
-            print(f"    [Open Parser] Method 2 (Data Attr): ${open_val:.2f}")
-            return open_val
+        if match: open_val = float(match.group(1).replace(',', ''))
+
+    if not open_val:
+        match = re.search(r'(?:>|")Open(?:<|")[\s\S]*?(?:<span[^>]*>|<dd[^>]*>)([\d,.]+)', html)
+        if match: open_val = float(match.group(1).replace(',', ''))
+
+    # --- EXTRACT PREVIOUS CLOSE ---
+    match = re.search(r'"previousClose":"?([\d,.]+)"?', html)
+    if match: prev_close_val = float(match.group(1).replace(',', ''))
+
+    if not prev_close_val:
+        match = re.search(r'Previous Close[\s\S]*?<span[^>]*>([\d,.]+)', html)
+        if match: prev_close_val = float(match.group(1).replace(',', ''))
         
-        # Method 3: Find in bcQuoteApp variable
-        if 'var bcQuoteApp' in html:
-            start = html.find('var bcQuoteApp')
-            end = html.find('};', start) + 1
-            snippet = html[start:end]
-            match = re.search(r'"open":\s*([\d,.]+)', snippet)
-            if match:
-                open_val = float(match.group(1).replace(',', ''))
-                print(f"    [Open Parser] Method 3 (bcQuoteApp): ${open_val:.2f}")
-                return open_val
-        
-        # Method 4: Look for "Open" label in the quote summary section
-        match = re.search(r'<dt[^>]*>Open[^<]*</dt>\s*<dd[^>]*>([\d,.]+)</dd>', html, re.IGNORECASE)
-        if match:
-            open_val = float(match.group(1).replace(',', ''))
-            print(f"    [Open Parser] Method 4 (Label): ${open_val:.2f}")
-            return open_val
-        
-        # Method 5: Look in the price summary table
-        match = re.search(r'<tr[^>]*>\s*<td[^>]*>Open[^<]*</td>\s*<td[^>]*>([\d,.]+)</td>', html, re.IGNORECASE)
-        if match:
-            open_val = float(match.group(1).replace(',', ''))
-            print(f"    [Open Parser] Method 5 (Table): ${open_val:.2f}")
-            return open_val
-            
-        print("    [Open Parser] All methods failed - no opening price found")
-    except Exception as e:
-        print(f"    [Open Parser] Error: {e}")
-    return None
+    if not prev_close_val:
+        match = re.search(r'Previous Close[\s\S]*?<td[^>]*>([\d,.]+)', html)
+        if match: prev_close_val = float(match.group(1).replace(',', ''))
+
+    return open_val, prev_close_val
 
 # ============ METHOD 1: Official Hidden API ============
 def method_1_api(symbol="RMF26"):
     print(f"  [Method 1] Trying Official API for {symbol}...")
     url = "https://www.barchart.com/proxies/core-api/v1/quotes/get"
-    params = {'fields': 'lastPrice,priceChange,high,low,open', 'list': symbol}
+    # Added previousClose to fields
+    params = {'fields': 'lastPrice,priceChange,high,low,open,previousClose', 'list': symbol}
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'X-Requested-With': 'XMLHttpRequest',
@@ -124,17 +98,18 @@ def method_1_api(symbol="RMF26"):
                 quote = data['data'][0]
                 price = float(str(quote.get('lastPrice', 0)).replace(',', ''))
                 open_price = float(str(quote.get('open', 0)).replace(',', ''))
+                prev_close = float(str(quote.get('previousClose', 0)).replace(',', ''))
                 
-                # Return None for open if it's 0 or same as price
-                if open_price == 0 or open_price == price:
-                    open_price = None
-                    
+                if open_price == 0: open_price = None
+                if prev_close == 0: prev_close = None
+
                 return {
                     'price': price,
                     'change': float(str(quote.get('priceChange', 0)).replace(',', '')),
                     'high': float(str(quote.get('high', 0)).replace(',', '')),
                     'low': float(str(quote.get('low', 0)).replace(',', '')),
                     'open': open_price,
+                    'previous_close': prev_close,
                     'source': 'Barchart API'
                 }
     except: pass
@@ -157,19 +132,11 @@ def method_2_curl_cffi(symbol="RMF26"):
         if response.status_code == 200:
             price = extract_price_from_html(response.text)
             if price:
-                # Try to extract opening price from HTML
-                open_price = extract_open_from_html(response.text)
-                
-                # Return None for open if it's same as current price
-                if open_price and abs(open_price - price) < 0.01:
-                    open_price = None
-                    
+                open_price, prev_close = extract_details_from_html(response.text)
+                if open_price and abs(open_price - price) < 0.01: open_price = None
                 return {
-                    'price': price, 
-                    'change': 0,
-                    'high': price,
-                    'low': price,
-                    'open': open_price,
+                    'price': price, 'change': 0, 'high': price, 'low': price,
+                    'open': open_price, 'previous_close': prev_close,
                     'source': 'Barchart (TLS)'
                 }
     except Exception as e: 
@@ -195,70 +162,41 @@ def method_3_antibot(symbol="RMF26"):
         if response.status_code == 200:
             price = extract_price_from_html(response.text)
             if price:
-                # Try to extract opening price from HTML
-                open_price = extract_open_from_html(response.text)
-                
-                # Return None for open if it's same as current price
-                if open_price and abs(open_price - price) < 0.01:
-                    open_price = None
-                    
+                open_price, prev_close = extract_details_from_html(response.text)
+                if open_price and abs(open_price - price) < 0.01: open_price = None
                 return {
-                    'price': price,
-                    'change': 0,
-                    'high': price,
-                    'low': price,
-                    'open': open_price,
+                    'price': price, 'change': 0, 'high': price, 'low': price,
+                    'open': open_price, 'previous_close': prev_close,
                     'source': 'Barchart (Headers)'
                 }
     except: pass
     return None
 
-# ============ MASTER FUNCTION FOR SINGLE CONTRACT ============
+# ============ MASTER FUNCTION ============
 def get_barchart_contract(symbol):
-    """Get data for a single Barchart contract (Robusta or Arabica)"""
     print(f"\n🌊 Fetching {symbol} from Barchart...")
-    
-    # Try methods in order
     res = method_1_api(symbol)
     if res: return res
-    
     res = method_2_curl_cffi(symbol)
     if res: return res
-    
     res = method_3_antibot(symbol)
     if res: return res
-
     print(f"❌ All methods failed for {symbol}")
     return None
 
-# ============ ROBUSTA COFFEE (Current Contract) ============
 def get_barchart_robusta_jan26():
-    """Get Robusta Coffee current contract (Jan '26)"""
     return get_barchart_contract("RMF26")
 
-# ============ ARABICA COFFEE (Last 2 Contracts) ============
 def get_barchart_arabica_last2():
-    """
-    Get Arabica Coffee 4/5 last 2 active contracts from Barchart
-    Uses XF symbols (Arabica Coffee 4/5) not KC (standard Arabica)
-    Fetches: Dec '25 (XFZ25) and Mar '26 (XFH26)
-    Returns: List of 2 contract dictionaries with price, change, high, low
-    """
     print("\n🌊 Fetching Arabica Coffee 4/5 Last 2 Contracts from Barchart...")
-    
-    # Define the exact contracts we want (XF = Arabica Coffee 4/5)
     contracts_to_fetch = [
         {'symbol': 'XFZ25', 'contract': 'Z25', 'name': 'Dec \'25'},
         {'symbol': 'XFH26', 'contract': 'H26', 'name': 'Mar \'26'}
     ]
-    
     results = []
-    
     for contract_info in contracts_to_fetch:
         symbol = contract_info['symbol']
         print(f"  📊 Fetching {contract_info['name']} ({symbol})...")
-        
-        # Fetch the contract data
         data = get_barchart_contract(symbol)
         if data:
             data['symbol'] = symbol
@@ -267,22 +205,4 @@ def get_barchart_arabica_last2():
             print(f"    ✅ Got {contract_info['name']}: ${data['price']:.2f}")
         else:
             print(f"    ❌ Failed to fetch {contract_info['name']}")
-    
     return results if len(results) == 2 else None
-
-# ============ TESTING ============
-if __name__ == "__main__":
-    print("🧪 Testing Barchart Scraper\n")
-    
-    # Test Robusta
-    robusta = get_barchart_robusta_jan26()
-    if robusta:
-        print(f"✅ Robusta: ${robusta['price']:.2f} | Open: ${robusta.get('open', 'N/A')}")
-    
-    # Test Arabica
-    arabica_contracts = get_barchart_arabica_last2()
-    if arabica_contracts:
-        print(f"\n✅ Arabica Contract 1 ({arabica_contracts[0]['symbol']}): ${arabica_contracts[0]['price']:.2f} | Open: ${arabica_contracts[0].get('open', 'N/A')}")
-        print(f"✅ Arabica Contract 2 ({arabica_contracts[1]['symbol']}): ${arabica_contracts[1]['price']:.2f} | Open: ${arabica_contracts[1].get('open', 'N/A')}")
-    else:
-        print("\n❌ Could not fetch Arabica contracts")
