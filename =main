@@ -1,13 +1,26 @@
-Flask==3.0.0
-requests==2.31.0
-groq==0.4.1
-gunicorn==21.2.0
-beautifulsoup4==4.12.2
-matplotlib==3.8.2
-fpdf==1.7.2
-curl-cffi==0.7.3
-fake-useragent==1.5.1
-APScheduler==3.10.4
-python-dateutil==2.8.2
-Pillow==10.1.0
-reportlab
+services:
+  - type: web
+    name: robusta-coffee-monitor
+    env: python
+    region: oregon
+    plan: free
+    branch: main
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn monitor:app --timeout 120 --workers 2
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
+      - key: EMAIL_PASSWORD
+        sync: false
+      - key: EMAIL_TO
+        sync: false
+    healthCheckPath: /
+    autoDeploy: true
