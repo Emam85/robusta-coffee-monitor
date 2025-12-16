@@ -3,7 +3,7 @@
 Abu Auf Commodities Monitor - Enhanced Version v3.3 (Fixed URL + Full Features)
 Features:
 - 🌊 Intelligent Waterfall Scraper (Barchart → Investing.com)
-- 🧠 Gemini AI Analysis
+- 🧠 Groq AI Analysis
 - 📊 Hourly Charts & Summaries
 - 📄 Weekly PDF Reports (Full Implementation)
 - 📱 Telegram Notifications (URL Bug Fixed)
@@ -15,7 +15,7 @@ import os
 import json
 import requests
 from datetime import datetime, timedelta, time as dt_time
-import google.generativeai as genai
+from groq import Groq
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -53,7 +53,7 @@ from commodity_fetcher import fetch_commodity_data as fetch_from_investing
 # ============ CONFIGURATION ============
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
 TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID')
-GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
+GROQ_API_KEY = os.environ.get('GROQ_API_KEY')
 EMAIL_FROM = os.environ.get('EMAIL_FROM')
 EMAIL_PASSWORD = os.environ.get('EMAIL_PASSWORD')
 EMAIL_TO = os.environ.get('EMAIL_TO', EMAIL_FROM)
@@ -71,11 +71,14 @@ WATCHLIST = {
     'PO=F': {'name': 'Palm Oil', 'type': 'Oils'}
 }
 
-# Configure Gemini
-if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
-    analysis_model = genai.GenerativeModel('gemini-2.0-flash-exp')
+# Configure Groq
+GROQ_MODEL = "mixtral-8x7b-32768" # Fast and capable Groq model
+
+if GROQ_API_KEY:
+    groq_client = Groq(api_key=GROQ_API_KEY)
+    analysis_model = GROQ_MODEL
 else:
+    groq_client = None
     analysis_model = None
 
 # Price history storage (in-memory with timestamps)
@@ -272,7 +275,7 @@ def fetch_commodity_data(symbol):
                 'source': 'Investing.com',
                 'exchange': exchange
             }
-    except Exception as e:
+    except requests.exceptions.RequestException as e:
         print(f"❌ Error fetching {symbol}: {e}")
     
     return None
@@ -422,7 +425,7 @@ Support/resistance should be realistic price levels based on the data provided."
         
         return analysis
     
-    except Exception as e:
+    except requests.exceptions.RequestException as e:
         print(f"⚠️ AI analysis error for {commodity_data['name']}: {e}")
         return {
             'trend': 'SIDEWAYS (NEUTRAL)',
@@ -504,7 +507,7 @@ def send_telegram_message(message, parse_mode='Markdown'):
         print("✅ Telegram message sent successfully!")
         return True
     
-    except Exception as e:
+    except requests.exceptions.RequestException as e:
         print(f"❌ Telegram error: {e}")
         if 'response' in locals():
             print(f"   Response text: {response.text}")
@@ -525,7 +528,7 @@ def send_telegram_photo(photo_buffer, caption=''):
         response.raise_for_status()
         return True
     
-    except Exception as e:
+    except requests.exceptions.RequestException as e:
         print(f"❌ Telegram photo error: {e}")
         return False
 
@@ -545,7 +548,7 @@ def send_telegram_document(file_path, caption=''):
         
         return True
     
-    except Exception as e:
+    except requests.exceptions.RequestException as e:
         print(f"❌ Telegram document error: {e}")
         return False
 
@@ -595,7 +598,7 @@ def monitor_commodities():
             
             print(f"  ✅ {info['name']}: ${price_data['price']:.2f} ({price_data['change_percent']:+.2f}%)")
         
-        except Exception as e:
+        except requests.exceptions.RequestException as e:
             print(f"  ❌ Error processing {info['name']}: {e}")
             import traceback
             traceback.print_exc()
@@ -611,7 +614,7 @@ def monitor_commodities():
                 snapshot_msg += commodity_snapshot + "\n"
                 print(f"  ✅ {contract_data['name']} ({contract_data['contract']}): ${contract_data['price']:.2f} ({contract_data['change_percent']:+.2f}%)")
     
-    except Exception as e:
+    except requests.exceptions.RequestException as e:
         print(f"  ❌ Error processing Arabica contracts: {e}")
         import traceback
         traceback.print_exc()
@@ -675,7 +678,7 @@ def generate_price_chart(symbol, commodity_name):
         
         return buf
     
-    except Exception as e:
+    except requests.exceptions.RequestException as e:
         print(f"❌ Chart generation error for {symbol}: {e}")
         return None
 
@@ -746,8 +749,10 @@ def generate_daily_summary():
 def generate_executive_summary():
     """Generate executive summary text for PDF"""
     try:
-        model = genai.GenerativeModel('gemini-2.0-flash-exp')
-        
+        if not groq_client or not analysis_model:
+            print("⚠️ Groq client not initialized. Skipping AI analysis.")
+            return "AI Analysis is disabled. Please set GROQ_API_KEY."
+
         summary_data = []
         for symbol, info in WATCHLIST.items():
             if symbol in price_history and len(price_history[symbol]) > 1:
@@ -764,20 +769,27 @@ def generate_executive_summary():
                     summary_data.append(f"Arabica {contract['contract']}: {change_pct:+.2f}%")
         
         prompt = f"""As Chief Commodity Analyst, write a 2-3 paragraph executive summary for Abu Auf's board covering this week's commodity price movements:
-
+        
 {chr(10).join(summary_data)}
-
+        
 Structure:
 1. MARKET OVERVIEW: Overall tone (bullish/bearish/mixed) and key macro drivers
 2. STANDOUT MOVERS: Highlight commodities with >5% moves and explain why
 3. WEEK AHEAD: Forward-looking insights and risks to watch
-
+        
 Write in executive summary style: concise, data-driven, actionable. Assume the reader is C-level."""
-
-        response = model.generate_content(prompt)
-        return response.text.strip()
+        
+        response = groq_client.chat.completions.create(
+            model=analysis_model,
+            messages=[
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.7,
+        )
+        return response.choices[0].message.content.strip()
     
-    except:
+    except requests.exceptions.RequestException as e:
+        print(f"❌ Error generating executive summary with Groq: {e}")
         return "This week showed mixed movements across commodity markets. Key soft commodities displayed moderate volatility reflecting ongoing supply chain adjustments and shifting demand patterns. Grains and oils sectors maintained relative stability with seasonal factors playing a key role in price formation."
 
 def generate_weekly_pdf_report():
@@ -1038,7 +1050,7 @@ def generate_weekly_pdf_report():
         
         return pdf_path
     
-    except Exception as e:
+    except requests.exceptions.RequestException as e:
         print(f"❌ PDF generation error: {e}")
         import traceback
         traceback.print_exc()
@@ -1080,7 +1092,7 @@ Write in professional commodity analyst style. Be specific and actionable. NO ge
         response = model.generate_content(prompt)
         return response.text.strip()
     
-    except Exception as e:
+    except requests.exceptions.RequestException as e:
         if symbol.startswith('KC_'):
             return "Arabica coffee contract showing typical market dynamics. Further monitoring recommended."
         
@@ -1193,7 +1205,7 @@ def send_email_with_attachment(to_email, subject, html_body, attachment_path, at
         
         return True
     
-    except Exception as e:
+    except requests.exceptions.RequestException as e:
         print(f"      Error: {e}")
         return False
 
@@ -1272,7 +1284,7 @@ def send_weekly_report():
                     success_count += 1
                 else:
                     print(f"   ❌ Failed to send to {recipient}")
-            except Exception as e:
+            except requests.exceptions.RequestException as e:
                 print(f"   ❌ Error sending to {recipient}: {e}")
         
         print(f"\n📧 Email delivery: {success_count}/{len(EMAIL_RECIPIENTS)} successful")
@@ -1300,7 +1312,7 @@ def trigger_monitor():
             print("📄 /monitor endpoint triggered")
             monitor_commodities()
             print("✅ Background monitoring completed")
-        except Exception as e:
+        except requests.exceptions.RequestException as e:
             print(f"❌ Background error: {e}")
             import traceback
             traceback.print_exc()
@@ -1371,7 +1383,7 @@ def manual_check():
             print("📄 /check endpoint triggered")
             monitor_commodities()
             print("✅ Background monitoring completed")
-        except Exception as e:
+        except requests.exceptions.RequestException as e:
             print(f"❌ Background error: {e}")
             import traceback
             traceback.print_exc()
