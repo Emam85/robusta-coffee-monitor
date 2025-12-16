@@ -72,7 +72,7 @@ WATCHLIST = {
 }
 
 # Configure Groq
-GROQ_MODEL = "mixtral-8x7b-32768" # Fast and capable Groq model
+GROQ_MODEL = "llama-3.3-70b-versatile" # Fast and capable Groq model
 
 if GROQ_API_KEY:
     groq_client = Groq(api_key=GROQ_API_KEY)
