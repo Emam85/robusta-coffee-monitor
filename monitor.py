@@ -382,14 +382,16 @@ Current Data:
 
 NOTE: Your analysis should compare the current price (${commodity_data['price']:,.2f}) against the baseline price (${baseline_price:.2f}).
 
-Provide analysis in this exact JSON format:
+CRITICAL: Respond ONLY with valid JSON. No markdown, no explanations, no extra text.
+
+Return this EXACT JSON structure:
 {{
     "trend": "UPTREND/DOWNTREND/SIDEWAYS (STRONG/MODERATE/WEAK)",
     "recommendation": "BUY/SELL/HOLD",
     "risk_level": "HIGH/MEDIUM/LOW",
     "insight": "1-2 sentence market insight with context",
-    "support": number (key support level),
-    "resistance": number (key resistance level)
+    "support": number,
+    "resistance": number
 }}
 
 Be specific and professional. For trend strength, consider:
@@ -407,18 +409,33 @@ Support/resistance should be realistic price levels based on the data provided."
         response = groq_client.chat.completions.create(
             model=GROQ_MODEL,
             messages=[
+                {"role": "system", "content": "You are a JSON-only API. Always respond with valid JSON only, no markdown formatting."},
                 {"role": "user", "content": prompt}
             ],
-            temperature=0.7,
+            temperature=0.5,  # Lower temperature for more consistent JSON
+            response_format={"type": "json_object"}  # Force JSON output
         )
         
         response_text = response.choices[0].message.content.strip()
         
+        # Clean up common JSON formatting issues
+        # Remove markdown code blocks
         if response_text.startswith("```json"):
-            response_text = response_text[7:-3].strip()
+            response_text = response_text[7:]
         elif response_text.startswith("```"):
-            response_text = response_text[3:-3].strip()
+            response_text = response_text[3:]
         
+        if response_text.endswith("```"):
+            response_text = response_text[:-3]
+        
+        response_text = response_text.strip()
+        
+        # Remove comments (// or /* */)
+        import re
+        response_text = re.sub(r'//.*?$', '', response_text, flags=re.MULTILINE)
+        response_text = re.sub(r'/\*.*?\*/', '', response_text, flags=re.DOTALL)
+        
+        # Parse JSON
         analysis = json.loads(response_text)
         
         # Ensure all required fields are present
@@ -429,8 +446,31 @@ Support/resistance should be realistic price levels based on the data provided."
                     analysis[field] = "Market showing typical patterns for this commodity."
                 elif field in ['support', 'resistance']:
                     analysis[field] = commodity_data['price']
+                else:
+                    analysis[field] = 'UNKNOWN'
+        
+        # Ensure numeric fields are actually numbers
+        try:
+            analysis['support'] = float(analysis['support'])
+            analysis['resistance'] = float(analysis['resistance'])
+        except (ValueError, TypeError):
+            analysis['support'] = commodity_data['low']
+            analysis['resistance'] = commodity_data['high']
         
         return analysis
+    
+    except json.JSONDecodeError as e:
+        print(f"⚠️ JSON parsing error for {commodity_data['name']}: {e}")
+        print(f"   Raw response: {response_text[:200] if 'response_text' in locals() else 'N/A'}")
+        # Return safe fallback
+        return {
+            'trend': 'SIDEWAYS (NEUTRAL)',
+            'recommendation': 'HOLD',
+            'risk_level': 'MEDIUM',
+            'insight': f'Limited analysis available for {commodity_data["name"]}',
+            'support': commodity_data['low'],
+            'resistance': commodity_data['high']
+        }
     
     except Exception as e:
         print(f"⚠️ AI analysis error for {commodity_data['name']}: {e}")
