@@ -355,7 +355,7 @@ def fetch_arabica_contracts():
 
 def get_ai_analysis(commodity_data):
     """Generate AI analysis for a commodity including trend, recommendation, risk, and insight"""
-    if not GEMINI_API_KEY or analysis_model is None:
+    if not GROQ_API_KEY or analysis_model is None:
         return {
             'trend': 'SIDEWAYS (NEUTRAL)',
             'recommendation': 'HOLD',
