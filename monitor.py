@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-Abu Auf Commodities Monitor - Enhanced Version v3.3 (Fixed URL + Full Features)
+Abu Auf Commodities Monitor - Enhanced Version v3.3 (Groq Fixed)
 Features:
 - 🌊 Intelligent Waterfall Scraper (Barchart → Investing.com)
-- 🧠 Groq AI Analysis
+- 🧠 Groq AI Analysis (FULLY FIXED)
 - 📊 Hourly Charts & Summaries
 - 📄 Weekly PDF Reports (Full Implementation)
 - 📱 Telegram Notifications (URL Bug Fixed)
@@ -76,10 +76,8 @@ GROQ_MODEL = "mixtral-8x7b-32768" # Fast and capable Groq model
 
 if GROQ_API_KEY:
     groq_client = Groq(api_key=GROQ_API_KEY)
-    analysis_model = GROQ_MODEL
 else:
     groq_client = None
-    analysis_model = None
 
 # Price history storage (in-memory with timestamps)
 price_history = {}  # {symbol: [(timestamp, price), ...]}
@@ -275,7 +273,7 @@ def fetch_commodity_data(symbol):
                 'source': 'Investing.com',
                 'exchange': exchange
             }
-    except requests.exceptions.RequestException as e:
+    except Exception as e:
         print(f"❌ Error fetching {symbol}: {e}")
     
     return None
@@ -355,7 +353,7 @@ def fetch_arabica_contracts():
 
 def get_ai_analysis(commodity_data):
     """Generate AI analysis for a commodity including trend, recommendation, risk, and insight"""
-    if not GROQ_API_KEY or analysis_model is None:
+    if not GROQ_API_KEY or not groq_client:
         return {
             'trend': 'SIDEWAYS (NEUTRAL)',
             'recommendation': 'HOLD',
@@ -406,11 +404,20 @@ For risk level:
 
 Support/resistance should be realistic price levels based on the data provided."""
 
-        response = analysis_model.generate_content(prompt)
-        response_text = response.text.strip()
+        response = groq_client.chat.completions.create(
+            model=GROQ_MODEL,
+            messages=[
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.7,
+        )
+        
+        response_text = response.choices[0].message.content.strip()
         
         if response_text.startswith("```json"):
-            response_text = response_text[7:-3]
+            response_text = response_text[7:-3].strip()
+        elif response_text.startswith("```"):
+            response_text = response_text[3:-3].strip()
         
         analysis = json.loads(response_text)
         
@@ -425,7 +432,7 @@ Support/resistance should be realistic price levels based on the data provided."
         
         return analysis
     
-    except requests.exceptions.RequestException as e:
+    except Exception as e:
         print(f"⚠️ AI analysis error for {commodity_data['name']}: {e}")
         return {
             'trend': 'SIDEWAYS (NEUTRAL)',
@@ -507,7 +514,7 @@ def send_telegram_message(message, parse_mode='Markdown'):
         print("✅ Telegram message sent successfully!")
         return True
     
-    except requests.exceptions.RequestException as e:
+    except Exception as e:
         print(f"❌ Telegram error: {e}")
         if 'response' in locals():
             print(f"   Response text: {response.text}")
@@ -528,7 +535,7 @@ def send_telegram_photo(photo_buffer, caption=''):
         response.raise_for_status()
         return True
     
-    except requests.exceptions.RequestException as e:
+    except Exception as e:
         print(f"❌ Telegram photo error: {e}")
         return False
 
@@ -548,7 +555,7 @@ def send_telegram_document(file_path, caption=''):
         
         return True
     
-    except requests.exceptions.RequestException as e:
+    except Exception as e:
         print(f"❌ Telegram document error: {e}")
         return False
 
@@ -598,7 +605,7 @@ def monitor_commodities():
             
             print(f"  ✅ {info['name']}: ${price_data['price']:.2f} ({price_data['change_percent']:+.2f}%)")
         
-        except requests.exceptions.RequestException as e:
+        except Exception as e:
             print(f"  ❌ Error processing {info['name']}: {e}")
             import traceback
             traceback.print_exc()
@@ -614,7 +621,7 @@ def monitor_commodities():
                 snapshot_msg += commodity_snapshot + "\n"
                 print(f"  ✅ {contract_data['name']} ({contract_data['contract']}): ${contract_data['price']:.2f} ({contract_data['change_percent']:+.2f}%)")
     
-    except requests.exceptions.RequestException as e:
+    except Exception as e:
         print(f"  ❌ Error processing Arabica contracts: {e}")
         import traceback
         traceback.print_exc()
@@ -678,7 +685,7 @@ def generate_price_chart(symbol, commodity_name):
         
         return buf
     
-    except requests.exceptions.RequestException as e:
+    except Exception as e:
         print(f"❌ Chart generation error for {symbol}: {e}")
         return None
 
@@ -749,7 +756,7 @@ def generate_daily_summary():
 def generate_executive_summary():
     """Generate executive summary text for PDF"""
     try:
-        if not groq_client or not analysis_model:
+        if not groq_client or not GROQ_API_KEY:
             print("⚠️ Groq client not initialized. Skipping AI analysis.")
             return "AI Analysis is disabled. Please set GROQ_API_KEY."
 
@@ -780,7 +787,7 @@ Structure:
 Write in executive summary style: concise, data-driven, actionable. Assume the reader is C-level."""
         
         response = groq_client.chat.completions.create(
-            model=analysis_model,
+            model=GROQ_MODEL,
             messages=[
                 {"role": "user", "content": prompt}
             ],
@@ -788,9 +795,140 @@ Write in executive summary style: concise, data-driven, actionable. Assume the r
         )
         return response.choices[0].message.content.strip()
     
-    except requests.exceptions.RequestException as e:
+    except Exception as e:
         print(f"❌ Error generating executive summary with Groq: {e}")
         return "This week showed mixed movements across commodity markets. Key soft commodities displayed moderate volatility reflecting ongoing supply chain adjustments and shifting demand patterns. Grains and oils sectors maintained relative stability with seasonal factors playing a key role in price formation."
+
+def generate_commodity_deep_analysis(symbol, info, override_price=None):
+    """Generate detailed supply/demand analysis for specific commodity"""
+    try:
+        if symbol.startswith('KC_'):
+            if not override_price:
+                return "Insufficient data for analysis."
+            week_start = override_price
+            week_end = override_price
+            week_change_pct = 0
+        else:
+            if symbol not in price_history or len(price_history[symbol]) < 2:
+                return "Insufficient data for analysis."
+            prices = [p for _, p in price_history[symbol]]
+            week_start = prices[0]
+            week_end = prices[-1]
+            week_change_pct = ((week_end - week_start) / week_start * 100) if week_start else 0
+        
+        if not groq_client or not GROQ_API_KEY:
+            return f"Price movement of {week_change_pct:+.2f}% this week reflects ongoing market dynamics. Further monitoring recommended."
+        
+        prompt = f"""As a commodity analyst, write a 2-3 sentence supply/demand update for {info['name']}.
+
+Price moved {week_change_pct:+.2f}% this week (from ${week_start:.2f} to ${week_end:.2f}).
+
+Cover ONE OR TWO of these relevant factors:
+- Weather impacts on production regions
+- Export/import dynamics
+- Inventory levels and stock changes
+- Currency effects (USD strength/weakness)
+- Origin-specific developments
+- Demand trends from major buyers
+
+Write in professional commodity analyst style. Be specific and actionable. NO generic statements."""
+
+        response = groq_client.chat.completions.create(
+            model=GROQ_MODEL,
+            messages=[
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.7,
+        )
+        return response.choices[0].message.content.strip()
+    
+    except Exception as e:
+        print(f"❌ Deep analysis error: {e}")
+        if symbol.startswith('KC_'):
+            return "Arabica coffee contract showing typical market dynamics. Further monitoring recommended."
+        
+        prices = [p for _, p in price_history.get(symbol, [(None, 0)])]
+        change = ((prices[-1] - prices[0]) / prices[0] * 100) if len(prices) > 1 and prices[0] else 0
+        return f"Price movement of {change:+.2f}% this week reflects ongoing market dynamics. Further monitoring recommended."
+
+def generate_risk_analysis():
+    """Generate risk factors and outlook"""
+    try:
+        if not groq_client or not GROQ_API_KEY:
+            return "Market volatility remains elevated across agricultural commodities. Key risk factors include weather uncertainty in major producing regions, currency fluctuations affecting import costs, and evolving global demand patterns. Continued monitoring of supply chain dynamics recommended."
+        
+        prompt = """Write a 3-paragraph risk analysis for Abu Auf's commodity portfolio covering:
+
+1. MACROECONOMIC RISKS: Currency volatility, inflation, interest rates, geopolitical tensions affecting trade
+2. SUPPLY RISKS: Weather patterns (El Niño/La Niña), crop diseases, logistics disruptions, origin-specific issues
+3. DEMAND RISKS: Consumer trends, emerging markets demand, substitution effects
+
+Keep it board-level: strategic, not overly technical. Focus on MATERIAL risks that could impact procurement costs by >5%."""
+
+        response = groq_client.chat.completions.create(
+            model=GROQ_MODEL,
+            messages=[
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.7,
+        )
+        return response.choices[0].message.content.strip()
+    
+    except Exception as e:
+        print(f"❌ Risk analysis error: {e}")
+        return "Market volatility remains elevated across agricultural commodities. Key risk factors include weather uncertainty in major producing regions, currency fluctuations affecting import costs, and evolving global demand patterns. Continued monitoring of supply chain dynamics recommended."
+
+def generate_procurement_recommendations():
+    """Generate strategic procurement recommendations"""
+    try:
+        if not groq_client or not GROQ_API_KEY:
+            return """• Monitor volatile commodities closely for favorable entry points
+• Consider forward contracts for key ingredients showing upward trends
+• Diversify supplier base to mitigate single-origin risk
+• Review hedging strategies for commodities with high volatility"""
+        
+        commodities_summary = []
+        for symbol, info in WATCHLIST.items():
+            if symbol in price_history and len(price_history[symbol]) > 1:
+                prices = [p for _, p in price_history[symbol]]
+                trend = "RISING" if prices[-1] > prices[0] else "FALLING"
+                volatility = "HIGH" if (max(prices) - min(prices)) / prices[0] > 0.05 else "MODERATE"
+                commodities_summary.append(f"{info['name']}: {trend}, {volatility} volatility")
+        
+        if arabica_contracts:
+            for contract in arabica_contracts:
+                symbol_key = f"KC_CONTRACT_{arabica_contracts.index(contract)+1}"
+                baseline = daily_start_prices.get(symbol_key, contract['price'])
+                trend = "RISING" if contract['price'] > baseline else "FALLING"
+                volatility = "HIGH" if abs((contract['price'] - baseline) / baseline) > 0.05 else "MODERATE"
+                commodities_summary.append(f"Arabica ({contract['contract']}): {trend}, {volatility} volatility")
+        
+        prompt = f"""As procurement strategist for Abu Auf, provide 3-4 actionable recommendations based on this week's movements:
+
+{chr(10).join(commodities_summary)}
+
+Structure as:
+• IMMEDIATE ACTIONS (this week): Which commodities to buy/hedge now
+• SHORT-TERM TACTICS (2-4 weeks): Timing and volume strategies
+• RISK MITIGATION: Hedging or diversification suggestions
+
+Be specific: "Lock in 30% of Q1 coffee needs" not "consider hedging." Focus on VALUE PROTECTION."""
+
+        response = groq_client.chat.completions.create(
+            model=GROQ_MODEL,
+            messages=[
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.7,
+        )
+        return response.choices[0].message.content.strip()
+    
+    except Exception as e:
+        print(f"❌ Procurement recommendations error: {e}")
+        return """• Monitor volatile commodities closely for favorable entry points
+• Consider forward contracts for key ingredients showing upward trends
+• Diversify supplier base to mitigate single-origin risk
+• Review hedging strategies for commodities with high volatility"""
 
 def generate_weekly_pdf_report():
     """Generate professional commodity analysis report matching industry standards"""
@@ -858,7 +996,7 @@ def generate_weekly_pdf_report():
         pdf.set_font('Arial', '', 10)
         pdf.set_text_color(0, 0, 0)
         
-        if GEMINI_API_KEY:
+        if GROQ_API_KEY and groq_client:
             summary = generate_executive_summary()
             pdf.multi_cell(0, 6, summary)
         else:
@@ -1022,7 +1160,7 @@ def generate_weekly_pdf_report():
         pdf.set_font('Arial', '', 10)
         pdf.set_text_color(0, 0, 0)
         
-        if GEMINI_API_KEY:
+        if GROQ_API_KEY and groq_client:
             risk_analysis = generate_risk_analysis()
             pdf.multi_cell(0, 6, risk_analysis)
         
@@ -1035,7 +1173,7 @@ def generate_weekly_pdf_report():
         pdf.set_font('Arial', '', 10)
         pdf.set_text_color(0, 0, 0)
         
-        if GEMINI_API_KEY:
+        if GROQ_API_KEY and groq_client:
             recommendations = generate_procurement_recommendations()
             pdf.multi_cell(0, 6, recommendations)
         
@@ -1050,115 +1188,11 @@ def generate_weekly_pdf_report():
         
         return pdf_path
     
-    except requests.exceptions.RequestException as e:
+    except Exception as e:
         print(f"❌ PDF generation error: {e}")
         import traceback
         traceback.print_exc()
         return None
-
-def generate_commodity_deep_analysis(symbol, info, override_price=None):
-    """Generate detailed supply/demand analysis for specific commodity"""
-    try:
-        if symbol.startswith('KC_'):
-            if not override_price:
-                return "Insufficient data for analysis."
-            week_start = override_price
-            week_end = override_price
-            week_change_pct = 0
-        else:
-            if symbol not in price_history or len(price_history[symbol]) < 2:
-                return "Insufficient data for analysis."
-            prices = [p for _, p in price_history[symbol]]
-            week_start = prices[0]
-            week_end = prices[-1]
-            week_change_pct = ((week_end - week_start) / week_start * 100) if week_start else 0
-        
-        model = genai.GenerativeModel('gemini-2.0-flash-exp')
-        
-        prompt = f"""As a commodity analyst, write a 2-3 sentence supply/demand update for {info['name']}.
-
-Price moved {week_change_pct:+.2f}% this week (from ${week_start:.2f} to ${week_end:.2f}).
-
-Cover ONE OR TWO of these relevant factors:
-- Weather impacts on production regions
-- Export/import dynamics
-- Inventory levels and stock changes
-- Currency effects (USD strength/weakness)
-- Origin-specific developments
-- Demand trends from major buyers
-
-Write in professional commodity analyst style. Be specific and actionable. NO generic statements."""
-
-        response = model.generate_content(prompt)
-        return response.text.strip()
-    
-    except requests.exceptions.RequestException as e:
-        if symbol.startswith('KC_'):
-            return "Arabica coffee contract showing typical market dynamics. Further monitoring recommended."
-        
-        prices = [p for _, p in price_history.get(symbol, [(None, 0)])]
-        change = ((prices[-1] - prices[0]) / prices[0] * 100) if len(prices) > 1 and prices[0] else 0
-        return f"Price movement of {change:+.2f}% this week reflects ongoing market dynamics. Further monitoring recommended."
-
-def generate_risk_analysis():
-    """Generate risk factors and outlook"""
-    try:
-        model = genai.GenerativeModel('gemini-2.0-flash-exp')
-        
-        prompt = """Write a 3-paragraph risk analysis for Abu Auf's commodity portfolio covering:
-
-1. MACROECONOMIC RISKS: Currency volatility, inflation, interest rates, geopolitical tensions affecting trade
-2. SUPPLY RISKS: Weather patterns (El Niño/La Niña), crop diseases, logistics disruptions, origin-specific issues
-3. DEMAND RISKS: Consumer trends, emerging markets demand, substitution effects
-
-Keep it board-level: strategic, not overly technical. Focus on MATERIAL risks that could impact procurement costs by >5%."""
-
-        response = model.generate_content(prompt)
-        return response.text
-    
-    except:
-        return "Market volatility remains elevated across agricultural commodities. Key risk factors include weather uncertainty in major producing regions, currency fluctuations affecting import costs, and evolving global demand patterns. Continued monitoring of supply chain dynamics recommended."
-
-def generate_procurement_recommendations():
-    """Generate strategic procurement recommendations"""
-    try:
-        model = genai.GenerativeModel('gemini-2.0-flash-exp')
-        
-        commodities_summary = []
-        for symbol, info in WATCHLIST.items():
-            if symbol in price_history and len(price_history[symbol]) > 1:
-                prices = [p for _, p in price_history[symbol]]
-                trend = "RISING" if prices[-1] > prices[0] else "FALLING"
-                volatility = "HIGH" if (max(prices) - min(prices)) / prices[0] > 0.05 else "MODERATE"
-                commodities_summary.append(f"{info['name']}: {trend}, {volatility} volatility")
-        
-        if arabica_contracts:
-            for contract in arabica_contracts:
-                symbol_key = f"KC_CONTRACT_{arabica_contracts.index(contract)+1}"
-                baseline = daily_start_prices.get(symbol_key, contract['price'])
-                trend = "RISING" if contract['price'] > baseline else "FALLING"
-                volatility = "HIGH" if abs((contract['price'] - baseline) / baseline) > 0.05 else "MODERATE"
-                commodities_summary.append(f"Arabica ({contract['contract']}): {trend}, {volatility} volatility")
-        
-        prompt = f"""As procurement strategist for Abu Auf, provide 3-4 actionable recommendations based on this week's movements:
-
-{chr(10).join(commodities_summary)}
-
-Structure as:
-• IMMEDIATE ACTIONS (this week): Which commodities to buy/hedge now
-• SHORT-TERM TACTICS (2-4 weeks): Timing and volume strategies
-• RISK MITIGATION: Hedging or diversification suggestions
-
-Be specific: "Lock in 30% of Q1 coffee needs" not "consider hedging." Focus on VALUE PROTECTION."""
-
-        response = model.generate_content(prompt)
-        return response.text
-    
-    except:
-        return """• Monitor volatile commodities closely for favorable entry points
-• Consider forward contracts for key ingredients showing upward trends
-• Diversify supplier base to mitigate single-origin risk
-• Review hedging strategies for commodities with high volatility"""
 
 def send_hourly_report():
     """Send hourly report with Robusta chart and all commodities summary"""
@@ -1205,7 +1239,7 @@ def send_email_with_attachment(to_email, subject, html_body, attachment_path, at
         
         return True
     
-    except requests.exceptions.RequestException as e:
+    except Exception as e:
         print(f"      Error: {e}")
         return False
 
@@ -1262,7 +1296,7 @@ def send_weekly_report():
                     <hr style="border: none; border-top: 1px solid #ddd; margin: 20px 0;">
                     <p style="font-size: 12px; color: #666;">
                         <strong>Abu Auf Commodities Monitor</strong><br>
-                        Automated Intelligence System v3.1<br>
+                        Automated Intelligence System v3.3<br>
                         For internal use only
                     </p>
                 </div>
@@ -1284,7 +1318,7 @@ def send_weekly_report():
                     success_count += 1
                 else:
                     print(f"   ❌ Failed to send to {recipient}")
-            except requests.exceptions.RequestException as e:
+            except Exception as e:
                 print(f"   ❌ Error sending to {recipient}: {e}")
         
         print(f"\n📧 Email delivery: {success_count}/{len(EMAIL_RECIPIENTS)} successful")
@@ -1298,7 +1332,7 @@ def home():
     return jsonify({
         'status': 'online',
         'service': 'Abu Auf Commodities Monitor',
-        'version': '3.3 (Fixed)',
+        'version': '3.3 (Groq Fixed)',
         'market_status': market_status,
         'commodities': len(WATCHLIST) + 2,
         'timestamp': datetime.now().isoformat()
@@ -1312,7 +1346,7 @@ def trigger_monitor():
             print("📄 /monitor endpoint triggered")
             monitor_commodities()
             print("✅ Background monitoring completed")
-        except requests.exceptions.RequestException as e:
+        except Exception as e:
             print(f"❌ Background error: {e}")
             import traceback
             traceback.print_exc()
@@ -1383,7 +1417,7 @@ def manual_check():
             print("📄 /check endpoint triggered")
             monitor_commodities()
             print("✅ Background monitoring completed")
-        except requests.exceptions.RequestException as e:
+        except Exception as e:
             print(f"❌ Background error: {e}")
             import traceback
             traceback.print_exc()
@@ -1439,10 +1473,10 @@ def start_scheduler():
 
 # ============ MAIN ENTRY POINT ============
 if __name__ == '__main__':
-    print("🚀 Starting Abu Auf Commodities Monitor v3.3...")
+    print("🚀 Starting Abu Auf Commodities Monitor v3.3 (Groq Fixed)...")
     print(f"📊 Monitoring {len(WATCHLIST) + 2} commodities (including 2 Arabica contracts)")
     print(f"📱 Telegram: {'Enabled' if TELEGRAM_BOT_TOKEN else 'Disabled'}")
-    print(f"🧠 AI Analysis: {'Enabled' if GEMINI_API_KEY else 'Disabled'}")
+    print(f"🧠 AI Analysis: {'Enabled (Groq)' if GROQ_API_KEY else 'Disabled'}")
     print(f"📧 Email: {'Enabled' if EMAIL_FROM and EMAIL_PASSWORD else 'Disabled'}")
     print(f"⏰ Market Hours: Monday-Friday, 9:00 AM - 9:00 PM Cairo Time")
     print("\n" + "="*60 + "\n")
